@@ -1,0 +1,26 @@
+{
+  "name": "fieldline-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/dm-sans": "5.2.6",
+    "@fontsource/kantumruy-pro": "5.2.7",
+    "leaflet": "1.9.4",
+    "lucide-vue-next": "0.468.0",
+    "vue": "3.5.22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@tailwindcss/vite": "4.1.16",
+    "@vitejs/plugin-vue": "6.0.1",
+    "tailwindcss": "4.1.16",
+    "vite": "7.1.12"
+  }
+}

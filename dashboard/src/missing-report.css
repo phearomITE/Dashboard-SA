@@ -1,0 +1,12 @@
+.miss-report{overflow:hidden}.miss-filters{display:flex;align-items:end;gap:9px;flex-wrap:wrap;padding:13px}.miss-filters label{display:grid;gap:4px;font-size:11px;font-weight:650;color:#5d7065}.miss-filters input,.miss-filters select{height:36px;border:1px solid #d9e2db;border-radius:7px;padding:0 9px;background:#fff;color:#2d4437;font-size:12px}.miss-filters .miss-search{min-width:210px;flex:1}.miss-search>div{position:relative}.miss-search svg{position:absolute;top:11px;left:10px;color:#789181}.miss-search input{width:100%;padding-left:31px}.miss-filters .btn{height:36px}.miss-summary{display:grid;grid-template-columns:repeat(5,1fr);border-block:1px solid var(--line)}.miss-summary>div{padding:12px 16px;border-right:1px solid var(--line)}.miss-summary>div:last-child{border:0}.miss-summary small{display:block;font-size:11px;color:var(--muted)}.miss-summary strong{display:block;font-size:21px;color:#1c5947;margin-top:3px}.miss-table-wrap{overflow:auto;max-height:calc(100vh - 335px)}.miss-table-wrap table{width:100%;border-collapse:collapse;min-width:1000px}.miss-table-wrap th{position:sticky;top:0;background:#f5f8f6;z-index:1;text-align:left;padding:11px 13px}.miss-table-wrap td{border-top:1px solid var(--line);padding:10px 13px;font-size:12px;vertical-align:top}.miss-table-wrap td strong,.miss-table-wrap td small{display:block}.miss-table-wrap td small{font-size:10px;color:var(--muted);margin-top:2px}.miss-count{color:#b55f37}.miss-reasons{max-width:320px;min-width:200px}.miss-reasons span{display:block;white-space:normal;overflow-wrap:anywhere;margin-bottom:4px}.miss-empty{text-align:center;color:var(--muted);padding:36px!important}@media(max-width:700px){.miss-summary{grid-template-columns:repeat(2,1fr)}.miss-filters label{flex:1}.miss-table-wrap{max-height:none}}
+.miss-note{font-size:11px;color:#785e39;background:#fff9ea;padding:7px 13px;border-bottom:1px solid #efe7d3}
+.miss-summary{grid-template-columns:repeat(4,1fr)}
+@media(max-width:700px){
+  .miss-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .miss-summary>div{min-width:0;padding:10px 12px}.miss-summary>div:nth-child(2){border-right:0}
+  .miss-summary>div:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .miss-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end}
+  .miss-filters label,.miss-filters .miss-search{min-width:0}
+  .miss-filters .miss-search{grid-column:1/-1}.miss-filters .btn{width:100%;grid-column:1/-1}
+  .miss-table-wrap{max-height:none}
+}

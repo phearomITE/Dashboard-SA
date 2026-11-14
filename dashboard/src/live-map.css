@@ -1,0 +1,52 @@
+.live-map-page{max-width:none;padding-top:9px}
+.live-map-page .page-head{margin-bottom:15px}
+.live-map-page .page-head h1{font-size:32px;line-height:1.15}
+.live-map-page .page-head p{margin-top:4px}
+.live-map-section{display:grid;gap:12px;min-width:0}
+.map-coverage{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:9px}.map-coverage>div{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;display:flex;align-items:baseline;gap:8px}.map-coverage strong{font-size:19px;color:#244b3b}.map-coverage small{font-size:12px;color:#839387}.map-coverage span{font-size:11px;color:#6b8072}@media(max-width:620px){.map-coverage{grid-template-columns:repeat(3,minmax(0,1fr))}.map-coverage>div{display:block;padding:7px}.map-coverage strong{font-size:16px}.map-coverage span{display:block;font-size:10px}}
+.map-filter-panel{padding:12px 14px}
+.map-filter-grid{display:grid;grid-template-columns:110px repeat(2,minmax(105px,1fr)) minmax(170px,1.5fr) repeat(3,minmax(110px,1fr)) auto;align-items:end;gap:9px}
+.map-filter-panel label,.map-search>label{display:block;font-size:11px;font-weight:650;color:#586c60}
+.map-filter-panel input,.map-filter-panel select{display:block;width:100%;min-width:0;height:35px;border:1px solid #d9e2db;border-radius:7px;background:white;color:#2d4437;padding:0 9px;font-size:12px;margin-top:4px}
+.day-field{min-width:0}.map-search{min-width:0}.map-search>div{position:relative}.map-search svg{position:absolute;left:10px;top:10px;color:#789181}.map-search input{padding-left:31px}
+.map-filter-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;white-space:nowrap;padding-bottom:1px}.upload-dealers{display:inline-flex;align-items:center;gap:7px;height:35px;font-size:11px;padding:0 10px}
+.map-board{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,23%)}.map-pane,.route-panel{min-width:0;display:flex;flex-direction:column}
+.map-panel-head,.map-heading,.map-head-actions,.map-footer,.map-footer span,.route-foot,.map-back,.dealer-dialog .primary{display:flex;align-items:center;gap:7px}
+.map-panel-head{justify-content:space-between;padding:10px 16px;height:53px}.map-heading>svg,.route-foot>svg{color:#427b62}
+.map-heading h2,.route-head h2,.dealer-dialog h2{font-size:16px;font-weight:680;line-height:1.3;margin:0;color:#243c30}
+.map-head-actions{gap:5px}.map-live,.map-historical,.count-pill{border-radius:20px;font-weight:640;font-size:10px;padding:3px 8px;color:#40714e;background:#edf5ee}
+.map-live i{display:inline-block;height:6px;width:6px;background:#458e61;border-radius:50%;margin-right:5px}.map-historical{color:#64756a;background:#f1f3f0}
+.field-map{height:clamp(470px,68vh,760px);position:relative;isolation:isolate;overflow:hidden;background:#eff1e8}
+.map-canvas{height:100%;width:100%;background:#eff1e8;z-index:0;font-family:var(--font-sans)}
+/* The shared dashboard button and image defaults should not resize Leaflet tiles. */
+.map-canvas img.leaflet-tile{max-width:none!important;max-height:none!important}
+.map-style-control,.map-controls{position:absolute;z-index:3;background:#fff;border:1px solid #cfdacc;border-radius:7px;box-shadow:0 2px 8px #1c442511;color:#395540}
+.map-style-control{top:12px;left:12px;display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:11px;font-weight:600}
+.map-controls{right:12px;top:12px;display:grid}.map-controls button{width:31px;height:30px;display:grid;place-items:center}.map-controls button+button{border-top:1px solid #e4e9e1}.map-controls svg{width:15px;height:15px}
+.map-credit{position:absolute;right:0;bottom:0;background:#ffffffe8;padding:2px 5px;color:#506251;font-size:9px;z-index:2}
+.map-area-name{font-size:11px;line-height:1.15;font-weight:600;display:grid;place-items:center;color:#73866e;text-align:center;text-shadow:0 1px 2px white;pointer-events:none}
+.map-stop{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;border:2px solid white;background:#167554;color:white;font-weight:700;font-size:12px;box-shadow:0 2px 5px #234e323b}.map-stop.depot{border-radius:7px;background:#be8250}.map-stop.focused{outline:3px solid #5aa67f}
+.map-error{position:absolute;left:12px;bottom:16px;padding:5px 8px;background:white;border-radius:5px;font-size:11px}
+.map-footer{min-height:39px;padding:8px 15px;gap:15px;font-size:10px;color:#627768;flex-wrap:wrap}.map-footer i{display:inline-block;width:8px;height:8px}.legend-stop{background:#167554;border-radius:50%}.legend-dealer{background:#be8250;border-radius:2px}.map-timezone{margin-left:auto}
+.route-panel{border-left:1px solid var(--line);max-height:calc(clamp(470px,68vh,760px) + 92px)}.route-head{padding:11px 13px 9px;border-bottom:1px solid var(--line)}.route-head p{font-size:11px;color:#65796b;margin-top:3px}.count-pill{margin-left:auto}
+.route-scroll{overflow:auto;min-height:0;flex:1}.map-employee{display:flex;align-items:center;text-align:left;width:100%;padding:12px 14px;gap:9px;border-bottom:1px solid #edf1ec}.map-employee:hover,.route-item.stop:hover,.route-item.active{background:#f0f6f1}
+.map-avatar{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#e5efe5;color:#416e50;font-size:11px;font-weight:700;flex-shrink:0}
+.employee-label{min-width:0}.employee-label strong,.route-item strong,.map-empty strong{display:block;font-size:12px;font-weight:650;color:#294032}.employee-label small,.route-item small{display:block;color:#708173;font-size:10.5px;line-height:1.6}.employee-label strong{overflow-wrap:anywhere}
+.map-employee-end{margin-left:auto;display:grid;justify-items:end;color:#7c8b7c;font-size:10px}
+.map-back{font-size:11px;font-weight:650;color:#257453}.route-head .map-back{margin-bottom:6px}
+.employee-route{padding:8px}.employee-route+.employee-route{border-top:1px solid var(--line)}.route-item{display:flex;width:100%;gap:10px;padding:9px 7px;text-align:left;border-radius:7px;position:relative}.route-item>span:last-child{min-width:0;flex:1}
+.route-item:not(:last-child)::after{content:'';position:absolute;left:18px;top:36px;bottom:-9px;width:1px;background:#d2dfd4}.route-number{display:grid;place-items:center;width:23px;height:23px;flex-shrink:0;border-radius:50%;background:#e4f1e7;color:#236a43;font-weight:700;font-size:10px}.origin .route-number{background:#fbefe4;color:#a26c3f;border-radius:5px}
+.route-item time{float:right;color:#65796a;font-size:10px}.route-foot{padding:10px 13px;border-top:1px solid var(--line);font-size:10px;color:#65776a}.map-empty{display:grid;justify-items:center;gap:8px;padding:35px 12px;color:#79907d}
+.dealer-dialog{margin:auto;width:min(450px,calc(100% - 30px));padding:24px;border:1px solid var(--line);border-radius:13px;color:var(--ink);background:#fff;box-shadow:0 15px 80px #19392933}.dealer-dialog::backdrop{background:#183b2b55}.dealer-dialog .dialog-head{display:flex;justify-content:space-between;align-items:center}.dealer-dialog p{font-size:13px;color:var(--muted);line-height:1.6;margin:12px 0}.dealer-dialog .map-back{margin:10px 0 17px}.dealer-dialog label{display:block;font-size:12px;font-weight:650}.dealer-dialog input{width:100%;padding:8px;border:1px dashed #b7ccbb;border-radius:7px;margin-top:5px;font-size:12px}.dealer-dialog input::file-selector-button{background:#e8f2e8;border:0;border-radius:4px;padding:4px 7px;margin-right:8px}.dealer-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:18px}
+@media(max-width:1450px){.map-filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.map-filter-actions{justify-content:flex-start}.map-board{grid-template-columns:minmax(0,1fr) minmax(230px,27%)}}
+@media(max-width:1050px){.map-board{grid-template-columns:minmax(0,1fr) 220px}.map-footer .map-timezone{display:none}}
+@media(max-width:740px){.map-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.map-search{grid-column:span 2}.map-filter-actions{grid-column:span 2}.map-board{grid-template-columns:1fr}.route-panel{border-left:0;border-top:1px solid var(--line);max-height:330px}.field-map{height:340px}.map-footer{min-height:33px}.map-panel-head{height:45px}.live-map-page .page-head h1{font-size:27px}}
+@media(max-width:420px){.map-search input{font-size:11px}.field-map{height:300px}}
+.route-summary{padding:9px 13px;border-bottom:1px solid var(--line);font-size:11px}.route-summary strong{display:block;margin:3px 0;color:#294032}.route-summary p{font-size:10.5px;line-height:1.45;color:#54695b}
+.map-style-control{display:flex;align-items:center;gap:3px;padding:4px;max-width:calc(100% - 75px);flex-wrap:wrap}.map-style-control>svg{margin:0 5px}.map-style-control button{padding:5px 7px;border-radius:5px}.map-style-control button.active{background:#e3f1ea;color:#156454;font-weight:700}.map-style-control label{display:flex;align-items:center;gap:3px;padding:0 5px;font-size:10px}.dealer-logo-pin{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:white;border:2px solid #0b7e48;box-shadow:0 2px 6px #173b2b55;overflow:hidden}.dealer-logo-pin img{width:31px;height:31px;max-width:none;object-fit:cover;object-position:center 30%}
+@media(max-width:740px){
+  .map-board{min-width:0}.map-filter-actions{flex-wrap:wrap}.upload-dealers{white-space:normal;height:auto;min-height:35px}
+  .map-style-control{right:53px;max-width:none;font-size:10px}.map-style-control button{padding:5px}
+  .route-panel{max-height:min(45vh,380px)}.route-head,.route-summary{overflow-wrap:anywhere}
+}
+@media(max-width:420px){.map-style-control>svg{display:none}.map-style-control label{padding:0 2px}.map-coverage{gap:5px}.map-coverage>div{min-width:0}.map-coverage small{font-size:10px}}

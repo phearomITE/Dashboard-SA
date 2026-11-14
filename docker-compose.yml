@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: telegram_sa_alert_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-alert_message}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-CHANGE_ME}
+    ports:
+      - "${DB_PORT:-5437}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-alert_message}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram_sa_alert_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./app/data/master_sa_20261114.json:/app/app/data/master_sa_20261114.json:ro
+      - ./app/data/dealer_stations.csv:/app/app/data/dealer_stations.csv:ro
+      - ./app/data/controller_assignments.json:/app/app/data/controller_assignments.json:ro
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      LOG_FILE: ""
+      PYTHONUNBUFFERED: "1"
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 8080
+      DASHBOARD_AUTH_REQUIRED: "false"
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "app.main"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.production_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  postgres_data:
