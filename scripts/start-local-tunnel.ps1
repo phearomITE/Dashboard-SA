@@ -35,5 +35,6 @@ try {
 } finally {
     $token = $null
     $command = $null
-    Set-Clipboard -Value ''
+    # Windows PowerShell rejects an empty clipboard value; a space replaces the secret.
+    Set-Clipboard -Value ' '
 }
