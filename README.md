@@ -6,11 +6,11 @@ Telegram field reporting bot with a PostgreSQL backed operations dashboard. It i
 
 1. Copy `.env.server.example` to `.env` and supply your own Telegram bot token and database password.
 2. Place the private roster, dealer coordinates, and controller assignments in `app/data/`. Their filenames and formats are described in `SERVER_DEPLOYMENT.md`. They are excluded from Git and Docker images.
-3. Run `docker compose up -d --build` and open `http://127.0.0.1:8080`. Send `/dashboard` to the bot in a private Telegram chat from a configured management administrator account to receive a single-use sign-in code.
+3. Run `docker compose up -d --build` and open `http://127.0.0.1:8080`. The local test stack opens without a sign-in page. Anyone who can reach a shared Quick Tunnel link can view and edit its dashboard data.
 
 ## Temporary Cloudflare testing without a domain
 
-Use [QUICK_TUNNEL_TESTING.md](QUICK_TUNNEL_TESTING.md). This test route uses the dashboard's Telegram administrator sign-in, since Cloudflare's protected Quick Tunnel email sessions currently have a reported expiration issue. Do not remove dashboard authentication when sharing a Quick Tunnel link.
+Use [QUICK_TUNNEL_TESTING.md](QUICK_TUNNEL_TESTING.md). This test route opens directly for anyone with its temporary URL. Do not share the URL beyond your test group.
 
 ## Server deployment
 

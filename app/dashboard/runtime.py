@@ -25,6 +25,9 @@ async def dashboard_command(update, context):
     if "dashboard_server" not in context.application.bot_data:
         await update.effective_message.reply_text("The dashboard listener is unavailable. Check the bot startup log.")
         return
+    if not settings.DASHBOARD_AUTH_REQUIRED:
+        await update.effective_message.reply_text("Dashboard sign-in is disabled for this test. Open your dashboard link directly.")
+        return
     try:
         code = access.issue(update.effective_user.id)
     except ValueError:
