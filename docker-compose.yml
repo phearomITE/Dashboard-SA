@@ -37,7 +37,7 @@ services:
       PYTHONUNBUFFERED: "1"
       DASHBOARD_HOST: 0.0.0.0
       DASHBOARD_PORT: 8080
-      DASHBOARD_AUTH_REQUIRED: "false"
+      DASHBOARD_AUTH_REQUIRED: "true"
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8080}:8080"
     depends_on:

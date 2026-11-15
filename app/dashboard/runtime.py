@@ -31,7 +31,7 @@ async def dashboard_command(update, context):
         await update.effective_message.reply_text("Dashboard access is limited to management administrators.")
         return
     await update.effective_message.reply_text(
-        f"Fieldline dashboard sign-in\n\n{code}\n\nOpen http://127.0.0.1:8080/ on the computer running the bot and enter this code within 5 minutes.",
+        f"Fieldline dashboard sign-in\n\n{code}\n\nOpen your dashboard link and enter this code within 5 minutes.",
         protect_content=True,
     )
 
