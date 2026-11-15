@@ -2,12 +2,12 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$secureCommand = Read-Host 'Paste the full Cloudflare Docker command (input is hidden)' -AsSecureString
+$secureCommand = Read-Host 'Paste the Cloudflare tunnel token or full Docker command (input is hidden)' -AsSecureString
 $command = [System.Net.NetworkCredential]::new('', $secureCommand).Password
 $secureCommand.Dispose()
-$match = [regex]::Match($command, '(?i)--token\s+["'']?(eyJ[A-Za-z0-9_-]{80,})')
+$match = [regex]::Match($command.Trim(), '(?i)(?:^|--token\s+["'']?)(eyJ[A-Za-z0-9_-]{80,})["'']?\s*$')
 if (-not $match.Success) {
-    throw 'The pasted command does not contain a full tunnel token. Rotate the exposed token, then copy the Docker command from Cloudflare.'
+    throw 'The pasted text does not contain a full tunnel token. Rotate the exposed token and copy a fresh token from Cloudflare.'
 }
 
 $token = $match.Groups[1].Value
