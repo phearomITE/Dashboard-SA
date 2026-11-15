@@ -2,10 +2,12 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$command = Get-Clipboard -Raw
+$secureCommand = Read-Host 'Paste the full Cloudflare Docker command (input is hidden)' -AsSecureString
+$command = [System.Net.NetworkCredential]::new('', $secureCommand).Password
+$secureCommand.Dispose()
 $match = [regex]::Match($command, '(?i)--token\s+["'']?(eyJ[A-Za-z0-9_-]{80,})')
 if (-not $match.Success) {
-    throw 'Clipboard does not contain a full Cloudflare Docker command. Rotate the exposed token, then click the copy icon beside Run tunnel with Docker.'
+    throw 'The pasted command does not contain a full tunnel token. Rotate the exposed token, then copy the Docker command from Cloudflare.'
 }
 
 $token = $match.Groups[1].Value
