@@ -15,9 +15,14 @@ Cloudflare setup reference: [self-hosted Access application](https://developers.
 
 Install Docker Compose on the server. Copy this project and its existing bot `.env` to the server. Copy the private roster JSON, dealer coordinates, and controller assignments into `private-data/master_sa_20261114.json`, `private-data/dealer_stations.csv`, and `private-data/controller_assignments.json` on the server. They are excluded from Git and the image and mounted read-only at runtime. Keep the PostgreSQL volume from the previous deployment or restore a verified backup; a fresh volume creates a new, empty database.
 
+Run these commands on the separate server, not in the Windows development folder where `docker-compose.yml` already runs the bot. The server Compose mounts require real private files; missing paths will fail instead of creating directories. Do not start the server stack while `.env.server` still contains `replace-with-...` placeholders.
+
 Copy `.env.server.example` to `.env.server` and set a strong database password and tunnel token. The database password must match the existing PostgreSQL volume if one is reused. Do not put secrets in Git.
 
 ```bash
+test -f private-data/master_sa_20261114.json
+test -f private-data/dealer_stations.csv
+test -f private-data/controller_assignments.json
 docker compose --env-file .env.server -f compose.server.yml config --quiet
 docker compose --env-file .env.server -f compose.server.yml up -d --build
 docker compose --env-file .env.server -f compose.server.yml ps
