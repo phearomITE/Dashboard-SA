@@ -5,12 +5,25 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.core.config import get_settings
 
 settings = get_settings()
+_connect_args = (
+    {
+        "connect_timeout": 10,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    }
+    if settings.database_url.startswith("postgresql")
+    else {}
+)
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=300,
+    pool_size=15,
+    max_overflow=25,
+    pool_recycle=180,
+    pool_timeout=20,
+    connect_args=_connect_args,
     echo=False,
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -35,7 +48,7 @@ def init_db() -> None:
 def acquire_runtime_lock() -> bool:
     """Return False when another bot instance already owns this database."""
     global _runtime_lock_connection
-    if engine.dialect.name != "postgresql":
+    if engine.dialect.name != "postgresql" or settings.DATABASE_URL.strip():
         return True
     if _runtime_lock_connection is not None:
         return True

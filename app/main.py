@@ -308,14 +308,19 @@ def main() -> None:
 
         db = SessionLocal()
         try:
-            from app.dashboard.dealer_import import seed_dealer_stations
-            seed_dealer_stations(db)
-            from app.services.master_update import apply_master
-            apply_master(db)
-            seed_sa_list(db)
-            migrate_legacy_roster_positions(db)
+            from app.database.models import AppliedMaster, SAList
+            if not db.get(AppliedMaster, "schema-2026-11-16"):
+                from app.dashboard.dealer_import import seed_dealer_stations
+                seed_dealer_stations(db)
+                from app.services.master_update import apply_master
+                apply_master(db)
+                seed_sa_list(db)
+                migrate_legacy_roster_positions(db)
+                db.merge(AppliedMaster(version="schema-2026-11-16"))
+                db.commit()
+            elif SA_MEMBERS:
+                seed_sa_list(db)
             load_controller_overrides(db)
-            from app.database.models import SAList
             active_rows = db.query(SAList.group_name).filter(SAList.is_deleted == 0, SAList.is_active == 1).all()
             db_group_count = len({r[0] for r in active_rows if r[0]})
             db_user_count = len(active_rows)

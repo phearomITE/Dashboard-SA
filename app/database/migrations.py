@@ -15,6 +15,16 @@ def _columns(conn, table_name: str) -> list[str]:
 
 
 def add_missing_columns() -> None:
+    try:
+        with engine.connect() as chk:
+            done = chk.execute(
+                text("SELECT 1 FROM applied_sa_masters WHERE version = 'schema-2026-11-16'")
+            ).scalar()
+            if done == 1:
+                return
+    except Exception:
+        pass
+
     inspector = inspect(engine)
     tables = inspector.get_table_names()
 
@@ -405,3 +415,5 @@ def add_missing_columns() -> None:
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_controller_group_user ON controller_group_assignments (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_controller_group_code ON controller_group_assignments (group_code)"))
+        if "applied_sa_masters" in tables:
+            conn.execute(text("INSERT INTO applied_sa_masters (version) VALUES ('schema-2026-11-16') ON CONFLICT DO NOTHING"))
