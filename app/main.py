@@ -6,7 +6,7 @@ import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from telegram import Update
-from telegram.error import NetworkError
+from telegram.error import Conflict, NetworkError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -77,6 +77,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Log handler failures without sending unwanted error replies into chats."""
     if update is None and isinstance(context.error, NetworkError):
         logger.info("Transient Telegram polling network reconnect: %s", context.error)
+        return
+    if update is None and isinstance(context.error, Conflict):
+        logger.warning("Telegram polling conflict (rolling deploy overlap): %s", context.error)
         return
     logger.exception("Telegram update failed", exc_info=context.error)
     if context.error is not None:
@@ -149,6 +152,14 @@ async def route_management_command(update: Update, context: ContextTypes.DEFAULT
 
 
 def create_bot() -> Application:
+    bot_request = HTTPXRequest(
+        connection_pool_size=32,
+        connect_timeout=60.0,
+        read_timeout=60.0,
+        write_timeout=60.0,
+        pool_timeout=60.0,
+        httpx_kwargs={"limits": httpx.Limits(max_connections=32, max_keepalive_connections=0)},
+    )
     polling_request = HTTPXRequest(
         connection_pool_size=4,
         connect_timeout=30.0,
@@ -160,11 +171,7 @@ def create_bot() -> Application:
     app = (
         Application.builder()
         .token(settings.TELEGRAM_BOT_TOKEN)
-        .connection_pool_size(32)
-        .connect_timeout(60)
-        .read_timeout(60)
-        .write_timeout(60)
-        .pool_timeout(60)
+        .request(bot_request)
         .get_updates_request(polling_request)
         .post_init(start_dashboard)
         .post_shutdown(stop_dashboard)
