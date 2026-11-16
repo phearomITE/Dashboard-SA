@@ -180,7 +180,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
                 yield db
                 db.commit()
 
-    @app.get("/healthz")
+    @app.api_route("/healthz", methods=["GET", "HEAD"])
     def healthz():
         return {"status": "ok"}
 
@@ -596,7 +596,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
             path.unlink(missing_ok=True)
             path.parent.rmdir()
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     def index():
         if not (DIST / "index.html").exists():
             raise HTTPException(503, "Dashboard assets are missing. Build the frontend in the dashboard directory.")
