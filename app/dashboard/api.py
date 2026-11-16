@@ -180,6 +180,10 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
                 yield db
                 db.commit()
 
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok"}
+
     @app.get("/api/mode")
     def mode():
         return {"preview": preview, "auth_required": auth_required}

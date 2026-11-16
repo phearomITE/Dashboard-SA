@@ -205,7 +205,10 @@ def seed_sa_list(db: Session) -> int:
     changed = False
     retained_ids: set[int] = set()
     now = local_now()
-    for member in db.info.get("official_roster", MASTER_ASSIGNMENTS):
+    roster_source = db.info.get("official_roster", MASTER_ASSIGNMENTS)
+    if not roster_source and "official_roster" not in db.info:
+        return 0
+    for member in roster_source:
         member_user_id = int(member.get("telegram_user_id") or 0)
         key = (normalize_group(member.get("group_name")), normalize_name(member.get("name")))
         username = normalize_username(member.get("username"))
@@ -299,13 +302,27 @@ def load_controller_overrides(db: Session) -> int:
         for row in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.id).all()
     ]
     replace_group_controller_assignments(assignments)
+    seeded_regions = False
+    existing_regions = {r.region for r in db.query(RegionalController).all()}
+    for reg_code in [f"R{i}" for i in range(1, 9)]:
+        items = controllers_for_region(reg_code)
+        if reg_code not in existing_regions and items:
+            first = items[0]
+            db.add(RegionalController(
+                region=reg_code,
+                name=", ".join(c.name for c in items),
+                username=first.username or "",
+                user_id=int(first.user_id),
+                updated_at=local_now(),
+            ))
+            seeded_regions = True
     updated_roster = False
     for sa_row in db.query(SAList).filter(SAList.is_deleted == 0).all():
         expected = _controller_text(sa_row.region)
         if expected and not sa_row.controller:
             sa_row.controller = expected
             updated_roster = True
-    if removed_stale or updated_roster:
+    if removed_stale or updated_roster or seeded_regions:
         db.commit()
     return count + len(assignments)
 

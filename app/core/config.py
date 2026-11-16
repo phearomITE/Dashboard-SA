@@ -4,17 +4,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    DATABASE_URL: str = ""
     DB_HOST: str = "localhost"
     DB_PORT: int = 5437
     DB_NAME: str = "alert_message"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
+    DB_SSLMODE: str = ""
 
     TELEGRAM_BOT_TOKEN: str
     DASHBOARD_ENABLED: bool = True
     DASHBOARD_AUTH_REQUIRED: bool = True
     DASHBOARD_HOST: str = "127.0.0.1"
     DASHBOARD_PORT: int = 8080
+    PORT: int = 0
     APP_TIMEZONE: str = "Asia/Phnom_Penh"
     LOG_LEVEL: str = "INFO"
     # Leave empty in Docker so logs go to stdout and are managed by Docker.
@@ -89,7 +92,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        raw = self.DATABASE_URL.strip()
+        if raw:
+            if raw.startswith("postgres://"):
+                return "postgresql+psycopg2://" + raw[len("postgres://"):]
+            if raw.startswith("postgresql://"):
+                return "postgresql+psycopg2://" + raw[len("postgresql://"):]
+            return raw
+        url = f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        if self.DB_SSLMODE.strip():
+            return f"{url}?sslmode={self.DB_SSLMODE.strip()}"
+        return url
 
     @property
     def work_days_list(self) -> list[int]:

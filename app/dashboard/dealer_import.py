@@ -13,6 +13,8 @@ from app.database.models import DealerLocation
 
 def seed_dealer_stations(db):
     path = Path(__file__).resolve().parents[1] / "data" / "dealer_stations.csv"
+    if not path.is_file():
+        return
     with path.open(encoding="utf-8", newline="") as source:
         stations = parse_table(csv.reader(source))
     for code, (lat, lon) in stations.items():

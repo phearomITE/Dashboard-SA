@@ -8,7 +8,8 @@ import unicodedata
 import json
 from pathlib import Path
 
-MASTER_ASSIGNMENTS = json.loads(Path(__file__).with_name("master_sa_20261114.json").read_text(encoding="utf-8"))
+_MASTER_PATH = Path(__file__).with_name("master_sa_20261114.json")
+MASTER_ASSIGNMENTS = json.loads(_MASTER_PATH.read_text(encoding="utf-8")) if _MASTER_PATH.is_file() else []
 
 
 SA_MEMBERS = [row for row in MASTER_ASSIGNMENTS if row["is_active"]]

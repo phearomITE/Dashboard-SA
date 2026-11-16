@@ -49,12 +49,13 @@ async def start_dashboard(application):
     settings = get_settings()
     if not settings.DASHBOARD_ENABLED:
         return
+    port = settings.PORT or settings.DASHBOARD_PORT
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.bind((settings.DASHBOARD_HOST, settings.DASHBOARD_PORT))
+        sock.bind((settings.DASHBOARD_HOST, port))
         server = DashboardServer(uvicorn.Config(create_api(access, SessionLocal, application,
             auth_required=settings.DASHBOARD_AUTH_REQUIRED),
-            host=settings.DASHBOARD_HOST, port=settings.DASHBOARD_PORT, log_config=None, access_log=False))
+            host=settings.DASHBOARD_HOST, port=port, log_config=None, access_log=False))
         task = asyncio.create_task(server.serve(sockets=[sock]))
         application.bot_data["dashboard_server"] = (server, task, sock)
     except OSError:

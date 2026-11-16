@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: dashboard-sa
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DASHBOARD_ENABLED
+        value: "true"
+      - key: DASHBOARD_HOST
+        value: "0.0.0.0"
+      - key: DASHBOARD_PORT
+        value: "8080"
+      - key: DASHBOARD_AUTH_REQUIRED
+        value: "false"
+      - key: APP_TIMEZONE
+        value: "Asia/Phnom_Penh"
+      - key: WORK_DAYS
+        value: "0,1,2,3,4"
+      - key: REMINDER_DAYS
+        value: "mon-fri"
+      - key: ALERT_INTERVAL_MINUTES
+        value: "20"
+      - key: ALERT_SETTLE_SECONDS
+        value: "2"
+      - key: SEND_ALL_PINNED_MESSAGE
+        value: "false"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: LOG_FILE
+        value: ""
