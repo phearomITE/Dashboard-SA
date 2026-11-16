@@ -2,9 +2,11 @@
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -13,6 +15,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from app.bot.handlers import (
     alert_now,
@@ -72,6 +75,9 @@ BUILD_ID = "20261105-controller-sa-start-menu-v23"
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log handler failures and attempt a plain main-chat error response."""
+    if update is None and isinstance(context.error, NetworkError):
+        logger.info("Transient Telegram polling network reconnect: %s", context.error)
+        return
     logger.exception("Telegram update failed", exc_info=context.error)
     if context.error is not None:
         with trace.get_tracer("sa-alert-bot").start_as_current_span("telegram.update.error") as span:
@@ -154,6 +160,14 @@ async def route_management_command(update: Update, context: ContextTypes.DEFAULT
 
 
 def create_bot() -> Application:
+    polling_request = HTTPXRequest(
+        connection_pool_size=4,
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+        httpx_kwargs={"limits": httpx.Limits(max_connections=4, max_keepalive_connections=0)},
+    )
     app = (
         Application.builder()
         .token(settings.TELEGRAM_BOT_TOKEN)
@@ -162,10 +176,7 @@ def create_bot() -> Application:
         .read_timeout(60)
         .write_timeout(60)
         .pool_timeout(60)
-        .get_updates_connect_timeout(30)
-        .get_updates_read_timeout(30)
-        .get_updates_write_timeout(30)
-        .get_updates_pool_timeout(30)
+        .get_updates_request(polling_request)
         .post_init(start_dashboard)
         .post_shutdown(stop_dashboard)
         .build()
