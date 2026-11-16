@@ -34,4 +34,6 @@ COPY --from=dashboard-build /ui/dist ./dashboard/dist
 RUN chown -R bot:bot /app
 USER bot
 
+EXPOSE 8080
+
 CMD ["python", "-m", "app.main"]

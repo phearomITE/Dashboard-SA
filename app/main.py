@@ -310,6 +310,10 @@ def main() -> None:
             seed_sa_list(db)
             migrate_legacy_roster_positions(db)
             load_controller_overrides(db)
+            from app.database.models import SAList
+            active_rows = db.query(SAList.group_name).filter(SAList.is_deleted == 0, SAList.is_active == 1).all()
+            db_group_count = len({r[0] for r in active_rows if r[0]})
+            db_user_count = len(active_rows)
         finally:
             db.close()
 
@@ -321,11 +325,12 @@ def main() -> None:
             BUILD_ID,
             settings.APP_TIMEZONE,
         )
-        group_count = len({member["group_name"] for member in SA_MEMBERS})
+        group_count = len({member["group_name"] for member in SA_MEMBERS}) or db_group_count
+        user_count = len(SA_MEMBERS) or db_user_count
         logger.info(
             "%s-group sale-photo alert bot active with %s official users. Work days=%s, interval=%s minutes",
             group_count,
-            len(SA_MEMBERS),
+            user_count,
             settings.WORK_DAYS,
             settings.ALERT_INTERVAL_MINUTES,
         )
