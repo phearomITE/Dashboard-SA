@@ -285,44 +285,27 @@ def load_controller_overrides(db: Session) -> int:
     count = 0
     removed_stale = False
     for row in db.query(RegionalController).all():
-        if int(row.user_id) <= 0:
-            if row.updated_at is None or row.updated_at < datetime(2026, 11, 14):
-                db.delete(row)
-                removed_stale = True
-                continue
-            remove_controller_for_region(row.region)
-        else:
-            set_controller_for_region(
-                row.region,
-                Controller(name=row.name, username=row.username, user_id=int(row.user_id)),
-            )
+        if int(row.user_id) <= 0 or "neab sona" in (row.name or "").lower() or "," in (row.name or ""):
+            db.delete(row)
+            removed_stale = True
+            continue
+        set_controller_for_region(
+            row.region,
+            Controller(name=row.name, username=row.username, user_id=int(row.user_id)),
+        )
         count += 1
     assignments = [
         (row.group_code, Controller(row.name, row.username, int(row.user_id)))
         for row in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.id).all()
     ]
     replace_group_controller_assignments(assignments)
-    seeded_regions = False
-    existing_regions = {r.region for r in db.query(RegionalController).all()}
-    for reg_code in [f"R{i}" for i in range(1, 9)]:
-        items = controllers_for_region(reg_code)
-        if reg_code not in existing_regions and items:
-            first = items[0]
-            db.add(RegionalController(
-                region=reg_code,
-                name=", ".join(c.name for c in items),
-                username=first.username or "",
-                user_id=int(first.user_id),
-                updated_at=local_now(),
-            ))
-            seeded_regions = True
     updated_roster = False
     for sa_row in db.query(SAList).filter(SAList.is_deleted == 0).all():
         expected = _controller_text(sa_row.region)
-        if expected and not sa_row.controller:
+        if expected and (not sa_row.controller or "neab sona" in (sa_row.controller or "").lower()):
             sa_row.controller = expected
             updated_roster = True
-    if removed_stale or updated_roster or seeded_regions:
+    if removed_stale or updated_roster:
         db.commit()
     return count + len(assignments)
 

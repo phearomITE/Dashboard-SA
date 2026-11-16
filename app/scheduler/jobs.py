@@ -4,11 +4,12 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
+from telegram.error import RetryAfter
 from telegram.ext import Application
 
 from app.core.config import get_settings
 from app.core.logger import get_logger
-from app.data.controllers import EXPORT_AUDIT_RECIPIENTS, controller_label_for_group
+from app.data.controllers import EXPORT_AUDIT_RECIPIENTS, controller_label_for_group, controller_topic_for_group
 from app.database.database import SessionLocal
 from app.database.models import MonitoringPreferences
 from app.services.formatter import sale_photo_missing_alert_message, special_window_alert_message
@@ -159,9 +160,23 @@ async def _send_missing_alert_for_group_window(
                     summary += "\nMore members omitted from this message."
                     break
                 summary += line
+            topic_id = controller_topic_for_group(group.group_name)
+            send_kwargs = dict(
+                chat_id=controller_group_id,
+                text=summary,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            if topic_id is not None:
+                send_kwargs["message_thread_id"] = topic_id
             try:
-                await application.bot.send_message(chat_id=controller_group_id, text=summary,
-                                                   parse_mode="HTML", disable_web_page_preview=True)
+                await application.bot.send_message(**send_kwargs)
+            except RetryAfter as retry_exc:
+                await asyncio.sleep(float(retry_exc.retry_after) + 0.5)
+                try:
+                    await application.bot.send_message(**send_kwargs)
+                except Exception:
+                    logger.exception("Controller alert copy retry failed group=%s destination=%s", group.group_id, controller_group_id)
             except Exception:
                 logger.exception("Controller alert copy failed group=%s destination=%s", group.group_id, controller_group_id)
         return len(users)

@@ -18,6 +18,7 @@ from app.data.sa_members import normalize_group
 from app.database.models import ControllerGroupAssignment, MissingSalePhotoAlert, MonitoringPreferences, PinHistory, Product, RegionalController, SAAlertExclusion, SAList, SAUser, TelegramGroup
 from app.dashboard.queries import activity, analytics, missing_report, snapshot
 from app.dashboard.dealer_import import import_dealers
+from app.dashboard.roster_import import import_master_sa
 from app.services.live_map import map_day
 from app.services.map_geography import boundary_map
 from app.services import user_service as users
@@ -392,6 +393,23 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
     def toggle_product(identity: int, body: Toggle, db=Depends(write)):
         required(db, Product, identity).enabled = body.enabled
         return {"enabled": body.enabled}
+
+    @app.delete("/api/products/{identity}")
+    def delete_product(identity: int, db=Depends(write)):
+        item = required(db, Product, identity)
+        db.delete(item)
+        db.flush()
+        return {"message": "Product deleted."}
+
+    @app.post("/api/members/import")
+    async def upload_master_sa(request: Request, format: Literal["csv", "xlsx"] = "xlsx", db=Depends(read)):
+        from starlette.concurrency import run_in_threadpool
+        content = bytearray()
+        async for chunk in request.stream():
+            if len(content) + len(chunk) > 8_000_000:
+                raise HTTPException(413, "Choose a file smaller than 8 MB.")
+            content.extend(chunk)
+        return await run_in_threadpool(import_master_sa, db, bytes(content), format)
 
     @app.post("/api/members", status_code=201)
     def add_member(body: MemberAdd, request: Request, db=Depends(write)):

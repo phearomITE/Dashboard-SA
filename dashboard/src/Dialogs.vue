@@ -13,7 +13,7 @@ const titles={product:row.id?'Edit product':'Add product',member:'Add member',ma
   manageController:'Manage controller',export:'Export report',monitoring:s.data.alerts_enabled?'Pause scheduled alerts?':'Resume scheduled alerts?',
   toggleProduct:row.enabled?'Disable product?':'Enable product?',toggleMember:row.enabled?'Disable member?':'Restore member?',
   toggleGroup:row.enabled?'Pause group alerts?':'Resume group alerts?',reset:'Reset current locations?',check:'Send missing alerts?',
-  unassign:row.regional?'Remove regional assignment?':'Remove dealer assignment?',deleteMember:'Delete SA from roster?'}
+  unassign:row.regional?'Remove regional assignment?':'Remove dealer assignment?',deleteMember:'Delete SA from roster?',deleteProduct:'Delete product?'}
 const title=computed(()=>titles[type.value])
 const actions=computed(()=>({
   manageMember:[['editMember','Edit all SA details',Pencil],['memberController','Edit dealer controller',ShieldCheck],...(row.bound&&row.enabled?[['leave','Manage annual leave',Clock3]]:[]),['toggleMember',row.enabled?'Disable member':'Restore member',Power],['deleteMember','Delete SA',Trash2]],
@@ -30,6 +30,7 @@ const copy=computed(()=>({
   check:'The bot will check the latest completed windows and message this Telegram group about missing submissions.',
   unassign:row.regional?'This clears all regional controllers for '+row.scope+'. Exact dealer assignments remain active.':'This removes '+row.name+' from '+row.scope+'.',
   deleteMember:'Remove '+row.name+' from the active roster and scheduled alerts? Past reports and location pins remain available.',
+  deleteProduct:'Remove '+row.name+' ('+row.sku+') from the product catalog?',
 }[type.value]||''))
 const previous=document.activeElement
 function close(){if(!s.busy)s.form=null}
@@ -72,6 +73,7 @@ async function submit(){
       case 'memberController':return save('members/'+row.id+'/controller','PUT',
         {name:v.name,username:v.username,telegram_id:v.telegram_id},'Dealer controller updated.')
       case 'deleteMember':return save('members/'+row.id,'DELETE',undefined,'Member deleted.')
+      case 'deleteProduct':return save('products/'+row.id,'DELETE',undefined,'Product deleted.')
       case 'leave':return save('members/'+row.id+'/leave','PUT',{period:v.period,start_date:v.period==='off'?null:v.start_date,
         end_date:v.period==='range'?v.end_date:null},'Leave updated.')
       case 'group':return save('groups/register/'+v.group_id,'POST')

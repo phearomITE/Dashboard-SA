@@ -1,12 +1,13 @@
 <script setup>
 import {computed, ref, watch} from 'vue'
 import {Bell, Boxes, CalendarClock, ChevronLeft, ChevronRight, CircleHelp, Clock3, Database, Download, Layers3, MapPin,
-  MoreHorizontal, Pencil, Radio, Search, ShieldCheck, SlidersHorizontal, Trash2, Users} from 'lucide-vue-next'
+  MoreHorizontal, Pencil, Radio, Search, ShieldCheck, SlidersHorizontal, Trash2, Upload, Users, X} from 'lucide-vue-next'
 import {initials,num,useWorkspace} from './workspace'
 import ProfileAvatar from './ProfileAvatar.vue'
 const props=defineProps({page:String})
-const {s,save}=useWorkspace()
+const {s,save,request,refresh,notify}=useWorkspace()
 const query=ref(''), status=ref('All statuses'), region=ref('All regions'), controller=ref('All controllers'), currentPage=ref(1), shift=ref(0)
+const uploadOpen=ref(false),masterFile=ref(null),uploadBusy=ref(false),uploadError=ref('')
 const controllerGroupId=ref(s.data.controller_alert_group_id||'-1004464440125'), controllerAlertsEnabled=ref(s.data.controller_alerts_enabled),settingsBusy=ref(false),settingsError=ref('')
 async function saveControllerAlerts(){
   if(!/^-\d+$/.test(controllerGroupId.value)){settingsError.value='Enter a negative Telegram group ID.';return}
@@ -33,8 +34,16 @@ function manage(row){
   const type={roster:'manageMember',products:'product',groups:'manageGroup',controllers:'manageController'}[props.page]
   s.form={type,row}
 }
-function edit(row){s.form={type:'editMember',row}}
-function remove(row){s.form={type:'deleteMember',row}}
+function edit(row){
+  if(props.page==='roster')s.form={type:'editMember',row}
+  else if(props.page==='products')s.form={type:'product',row}
+  else if(props.page==='controllers')s.form={type:'controller',row}
+}
+function remove(row){
+  if(props.page==='roster')s.form={type:'deleteMember',row}
+  else if(props.page==='products')s.form={type:'deleteProduct',row}
+  else if(props.page==='controllers')s.form={type:'unassign',row}
+}
 function editController(row){
   const scope=(row.region||'')+'-'+(row.dealer||'')
   const existing=s.data.controllers.find(c=>c.scope===scope)
@@ -47,6 +56,23 @@ function exportRosterCsv(){
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
   a.href=url;a.download=`sa-roster-${s.data.now.slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
 }
+function openUploadMaster(){masterFile.value=null;uploadError.value='';uploadOpen.value=true}
+function downloadMasterTemplate(){
+  const header='Telegram ID,SA Name,Username,Region,Dealer,Position,Working Time,Group,Controller\r\n'
+  const blob=new Blob(['\uFEFF'+header],{type:'text/csv;charset=utf-8'})
+  const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='master-sa-template.csv';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000)
+}
+async function submitUploadMaster(){
+  const f=masterFile.value
+  if(!f||uploadBusy.value)return
+  const ext=f.name.split('.').at(-1).toLowerCase()
+  if(!['csv','xlsx'].includes(ext)||f.size>8000000){uploadError.value='Choose an Excel (.xlsx) or CSV (.csv) file under 8 MB.';return}
+  uploadBusy.value=true;uploadError.value=''
+  try{
+    const res=await request('members/import?format='+ext,'POST',f)
+    uploadOpen.value=false;await refresh();notify(res?.message||(res.count+' Master SA members uploaded.'))
+  }catch(e){uploadError.value=e.message}finally{uploadBusy.value=false}
+}
 </script>
 <template>
   <section v-if="lists[page]" class="panel records">
@@ -54,6 +80,7 @@ function exportRosterCsv(){
       <select v-if="['roster','groups'].includes(page)" v-model="region" class="control" aria-label="Region"><option>All regions</option><option v-for="r in [...new Set(rows.map(x=>x.region).filter(Boolean))].sort()" :key="r">{{r}}</option></select>
       <select v-if="page==='roster'" v-model="controller" class="control" aria-label="Controller filter"><option>All controllers</option><option v-for="name in [...new Set(rows.map(x=>x.controller).filter(Boolean))].sort()" :key="name">{{name}}</option></select>
       <select v-if="page!=='controllers'" v-model="status" class="control" aria-label="Status filter"><option>All statuses</option><option>Enabled</option><option>Disabled</option></select>
+      <button v-if="page==='roster'" class="btn" @click="openUploadMaster"><Upload :size="15"/>Upload Master SA</button>
       <button v-if="page==='roster'" class="btn" @click="exportRosterCsv"><Download :size="15"/>Export SA roster</button>
       <span class="record-count">{{num(filtered.length)}} {{labels[page]}}</span></div>
     <div class="table-scroll"><table :class="{'roster-table':page==='roster'}"><thead><tr><th v-for="c in columns[page]" :key="c">{{c}}</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
@@ -66,11 +93,21 @@ function exportRosterCsv(){
         <template v-else-if="page==='groups'"><td>{{r.region||'—'}}</td><td>{{r.members}}</td><td><span class="badge" :class="r.enabled?'teal':'gray'"><i/>{{r.enabled?'Enabled':'Paused'}}</span></td></template>
         <template v-else-if="page==='products'"><td>{{r.sku}}</td><td>{{r.category||'—'}}</td><td><span class="badge" :class="r.enabled?'teal':'gray'"><i/>{{r.enabled?'Enabled':'Disabled'}}</span></td></template>
         <template v-else><td>{{r.telegram_id}}</td><td>{{r.scope}}</td><td>{{r.regional?'Regional':'Dealer group'}}</td></template>
-        <td><div class="row-actions"><button v-if="page==='roster'" class="icon action-icon" :aria-label="'Edit '+r.name" title="Edit member" @click="edit(r)"><Pencil :size="15"/></button><button v-if="page==='roster'" class="icon action-icon danger-action" :aria-label="'Delete '+r.name" title="Delete member" @click="remove(r)"><Trash2 :size="15"/></button><a v-if="page==='groups'" class="btn group-al-link" :href="'#annual-leave/'+r.id"><CalendarClock :size="14"/>AL</a><button class="icon action-icon" :aria-label="'Manage '+r.name" @click="manage(r)"><MoreHorizontal :size="17"/></button></div></td>
+        <td><div class="row-actions"><button v-if="['roster','products','controllers'].includes(page)" class="icon action-icon" :aria-label="'Edit '+r.name" title="Edit" @click="edit(r)"><Pencil :size="15"/></button><button v-if="['roster','products','controllers'].includes(page)" class="icon action-icon danger-action" :aria-label="'Delete '+r.name" title="Delete" @click="remove(r)"><Trash2 :size="15"/></button><a v-if="page==='groups'" class="btn group-al-link" :href="'#annual-leave/'+r.id"><CalendarClock :size="14"/>AL</a><button class="icon action-icon" :aria-label="'Manage '+r.name" @click="manage(r)"><MoreHorizontal :size="17"/></button></div></td>
       </tr></tbody></table></div>
       <div v-if="!visible.length" class="empty"><component :is="icons[page]"/><strong>{{rows.length?'No matching records':'No '+labels[page]+' yet'}}</strong><p>{{rows.length?'Change your search or filters.':'Use the action above to add your first record.'}}</p></div>
       <div v-if="filtered.length" class="pagination"><span>Page {{currentPage}} of {{pages}}</span><button class="icon" aria-label="Previous page" :disabled="currentPage<=1" @click="currentPage--"><ChevronLeft/></button><button class="icon" aria-label="Next page" :disabled="currentPage>=pages" @click="currentPage++"><ChevronRight/></button></div>
   </section>
+  <Teleport v-if="uploadOpen" to="body"><div class="dialog-overlay" @click.self="!uploadBusy&&(uploadOpen=false)"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="upload-master-title">
+    <div class="dialog-head"><div><span class="dialog-context">SA Roster</span><h2 id="upload-master-title">Upload Master SA</h2></div><button class="icon" aria-label="Close upload" :disabled="uploadBusy" @click="uploadOpen=false"><X :size="18"/></button></div>
+    <form @submit.prevent="submitUploadMaster">
+      <div class="dialog-copy">Upload an Excel (<code>.xlsx</code>) or CSV (<code>.csv</code>) file with columns: <strong>Telegram ID, SA Name, Username, Region, Dealer, Position, Working Time, Group, Controller</strong>.</div>
+      <button type="button" class="text-link" style="display:inline-flex;align-items:center;gap:6px;margin:12px 0" @click="downloadMasterTemplate"><Download :size="14"/>Download CSV template</button>
+      <label>Master SA file<input type="file" accept=".xlsx,.csv" required @change="masterFile=$event.target.files[0];uploadError=''"></label>
+      <div v-if="uploadError" class="error-text" role="alert">{{uploadError}}</div>
+      <div class="dialog-actions"><button type="button" class="btn" :disabled="uploadBusy" @click="uploadOpen=false">Cancel</button><button class="primary" :disabled="!masterFile||uploadBusy"><Upload :size="15"/>{{uploadBusy?'Uploading…':'Import Master SA'}}</button></div>
+    </form>
+  </section></div></Teleport>
   <template v-else-if="page==='schedules'">
     <section class="panel padded"><div class="panel-head"><div><h2>Shift windows</h2><p>{{s.data.workdays}} · {{s.data.timezone}}</p></div><CalendarClock class="quiet"/></div>
       <div class="shift-tabs"><button v-for="(f,i) in s.data.schedules" :key="f.key" :class="{on:shift===i}" @click="shift=i">{{f.label}}</button></div>

@@ -28,12 +28,57 @@ _CONFIG_PATH = Path(os.environ.get("CONTROLLER_CONFIG_PATH", Path(__file__).with
 _CONFIG = json.loads(_CONFIG_PATH.read_text(encoding="utf-8")) if _CONFIG_PATH.is_file() else {}
 
 
+_DEFAULT_REGIONS: dict[str, list[dict]] = {
+    "R1": [
+        {"name": "Sovannry On CE(R1)", "username": "OnSovannry", "user_id": 827319746},
+        {"name": "Sum Voleak (R1)", "username": "im_voleak", "user_id": 655365866},
+    ],
+    "R2": [
+        {"name": "Rathchantha Nøp (R2)", "username": "Rathchantha_Np", "user_id": 1488407142},
+    ],
+    "R3": [
+        {"name": "Sovannry On CE(R1)", "username": "OnSovannry", "user_id": 827319746},
+        {"name": "Sum Voleak (R1)", "username": "im_voleak", "user_id": 655365866},
+    ],
+    "R4": [
+        {"name": "Noeum Makly CE (R4)", "username": "Makly009", "user_id": 1037692560},
+    ],
+    "R5": [
+        {"name": "Chan Sela CE(R5)", "username": "chan_sela", "user_id": 672970722},
+    ],
+    "R6": [
+        {"name": "Maneth Houth CE (R6-R7)", "username": "", "user_id": 927032371},
+    ],
+    "R7": [
+        {"name": "Maneth Houth CE (R6-R7)", "username": "", "user_id": 927032371},
+    ],
+    "R8": [
+        {"name": "Noeum Makly CE (R4)", "username": "Makly009", "user_id": 1037692560},
+    ],
+}
+
+# Forum topic message_thread_id in SA_Controll (-1004464440125) for each region/controller.
+CONTROLLER_TOPIC_BY_REGION: dict[str, int] = {
+    "R1": 306,
+    "R2": 300,
+    "R3": 306,
+    "R4": 303,
+    "R5": 2,
+    "R6": 309,
+    "R7": 309,
+    "R8": 303,
+}
+
+
 def _controller(value: dict) -> Controller:
     return Controller(name=value["name"], username=value.get("username", ""), user_id=int(value["user_id"]))
 
 
 CONTROLLERS_BY_REGION: dict[str, tuple[Controller, ...]] = {
-    f"R{number}": tuple(_controller(item) for item in _CONFIG.get("regions", {}).get(f"R{number}", []))
+    f"R{number}": tuple(
+        _controller(item)
+        for item in _CONFIG.get("regions", _DEFAULT_REGIONS).get(f"R{number}", _DEFAULT_REGIONS.get(f"R{number}", []))
+    )
     for number in range(1, 9)
 }
 CONTROLLERS_BY_GROUP_CODE: dict[str, tuple[Controller, ...]] = {}
@@ -90,6 +135,25 @@ def controllers_for_group(group_name: str | None) -> tuple[Controller, ...]:
     if code and code in CONTROLLERS_BY_GROUP_CODE:
         return CONTROLLERS_BY_GROUP_CODE[code]
     return controllers_for_region(region_from_group(group_name))
+
+
+def controller_topic_for_group(group_name: str | None) -> int | None:
+    """Return the SA_Controll forum topic message_thread_id for a group's controller."""
+    assigned = controllers_for_group(group_name)
+    if assigned:
+        names = " ".join(c.name.lower() for c in assigned)
+        if "sovannry" in names or "voleak" in names:
+            return CONTROLLER_TOPIC_BY_REGION.get("R1", 306)
+        if "rathchantha" in names:
+            return CONTROLLER_TOPIC_BY_REGION.get("R2", 300)
+        if "makly" in names:
+            return CONTROLLER_TOPIC_BY_REGION.get("R4", 303)
+        if "sela" in names:
+            return CONTROLLER_TOPIC_BY_REGION.get("R5", 2)
+        if "maneth" in names:
+            return CONTROLLER_TOPIC_BY_REGION.get("R6", 309)
+    region = region_from_group(group_name)
+    return CONTROLLER_TOPIC_BY_REGION.get(region or "")
 
 
 def normalize_group_code(value: str | None) -> str:

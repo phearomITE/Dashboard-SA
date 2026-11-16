@@ -1885,12 +1885,6 @@ async def receive_missing_reason_reply(
             replied.message_id if replied is not None else None,
             bool(voice_to_text),
         )
-        await safe_reply(
-            update,
-            context,
-            "⚠️ Reason/voice was not linked to your missing alert row. "
-            "Please reply directly to the bot alert and resend it.",
-        )
 
 
 async def voice_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

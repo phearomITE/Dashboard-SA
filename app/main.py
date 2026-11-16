@@ -74,7 +74,7 @@ BUILD_ID = "20261105-controller-sa-start-menu-v23"
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log handler failures and attempt a plain main-chat error response."""
+    """Log handler failures without sending unwanted error replies into chats."""
     if update is None and isinstance(context.error, NetworkError):
         logger.info("Transient Telegram polling network reconnect: %s", context.error)
         return
@@ -83,17 +83,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         with trace.get_tracer("sa-alert-bot").start_as_current_span("telegram.update.error") as span:
             span.record_exception(context.error)
             span.set_status(Status(StatusCode.ERROR))
-
-    if not isinstance(update, Update) or update.effective_chat is None:
-        return
-
-    try:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Command failed. Please check the bot terminal log.",
-        )
-    except Exception:
-        logger.exception("Could not send fallback error message to chat %s", update.effective_chat.id)
 
 
 # Telegram normally supplies a bot-command entity, but some Desktop/mobile
