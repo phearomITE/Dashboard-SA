@@ -38,7 +38,8 @@ def snapshot(db, online, preview):
             status = "Starts tomorrow"
         elif not user:
             status = "Awaiting sync" if group else "Unregistered group"
-        controller = ", ".join(c.name for c in controllers_for_group(row.group_name)) or row.controller or ""
+        assigned = controllers_for_group(row.group_name) or controllers_for_region(row.region)
+        controller = ", ".join(c.name for c in assigned) or row.controller or ""
         roster.append(dict(id=row.id, name=row.name, username=row.username or (user.username if user else "") or "",
                            telegram_id=str(user.telegram_user_id if user else row.telegram_user_id or ""),
                            group=row.group_name, group_id=str(gid) if group else "", region=row.region,
@@ -138,26 +139,51 @@ def missing_report(db, from_date, to_date):
     """Aggregate recorded visits and missing alerts by Telegram user and group."""
     start = datetime.combine(from_date, time.min)
     end = datetime.combine(to_date + timedelta(days=1), time.min)
-    roster = {(str(r[0]), normalize_group(r[1])): (r[2], r[3], r[4]) for r in
-              db.query(SAList.telegram_user_id, SAList.group_name, SAList.controller, SAList.dealer, SAList.region)
-              .filter(SAList.is_deleted == 0, SAList.telegram_user_id.isnot(None))}
+    roster_rows = (
+        db.query(SAList.telegram_user_id, SAList.group_name, SAList.controller, SAList.dealer, SAList.region, SAList.name, SAList.source_type, SAList.is_active)
+        .filter(SAList.is_deleted == 0)
+        .all()
+    )
+    roster = {
+        (str(r[0]), normalize_group(r[1])): (r[2], r[3], r[4], r[5])
+        for r in roster_rows if r[0] is not None
+    }
     by_uid = {}
-    for (uid, _), member in roster.items():
-        by_uid.setdefault(uid, []).append(member)
+    for (uid, gnorm), member in roster.items():
+        by_uid.setdefault(uid, []).append((gnorm, member))
+    sa_users = {
+        (str(u.telegram_user_id), normalize_group(u.group_name)): u
+        for u in db.query(SAUser).filter(SAUser.is_from_list == 1).all()
+        if u.telegram_user_id is not None
+    }
+    for (uid, gnorm), u in sa_users.items():
+        if (uid, gnorm) not in roster:
+            info = ("", u.dealer or "", u.region or region_from_group(u.group_name) or "", u.official_name or u.name or "")
+            roster[(uid, gnorm)] = info
+            by_uid.setdefault(uid, []).append((gnorm, info))
+    has_official_roster = any(r[6] == "excel" for r in roster_rows)
+    active_pairs = {
+        (str(r[0]), normalize_group(r[1]))
+        for r in roster_rows if r[0] is not None and r[7] == 1
+    } | set(sa_users.keys())
     rows = {}
 
     def item(uid, group_id, group_name, name, region="", dealer=""):
-        key = (str(uid), group_id)
+        gnorm = normalize_group(group_name)
+        member = roster.get((str(uid), gnorm))
+        if member is None:
+            matches = by_uid.get(str(uid), [])
+            if len(matches) == 1:
+                gnorm, member = matches[0]
+            else:
+                member = ("", "", "", "")
+        key = (str(uid), gnorm or str(group_id))
         if key not in rows:
-            member = roster.get((str(uid), normalize_group(group_name)))
-            if member is None:
-                matches = by_uid.get(str(uid), [])
-                member = matches[0] if len(matches) == 1 else ("", "", "")
             code = group_code_from_name(group_name)
-            resolved_region = region or member[2] or (code.split('-')[0] if code else region_from_group(group_name))
+            resolved_region = region or member[2] or (code.split('-')[0] if code else region_from_group(group_name)) or ""
             resolved_dealer = dealer or member[1] or (code.split('-')[1] if code else "")
             assigned = controllers_for_group(group_name) or controllers_for_region(resolved_region)
-            rows[key] = dict(telegram_id=str(uid), name=name or "Unknown", group=group_name or str(group_id),
+            rows[key] = dict(telegram_id=str(uid), name=name or member[3] or "Unknown", group=group_name or str(group_id),
                              region=resolved_region, dealer=resolved_dealer,
                              controller=", ".join(c.name for c in assigned) or member[0] or "Unassigned",
                              total_visit=0, total_miss=0, reasons=[])
@@ -165,6 +191,8 @@ def missing_report(db, from_date, to_date):
 
     stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
     for pin in db.query(PinHistory).filter(PinHistory.group_id < 0, stamp >= start, stamp < end):
+        if has_official_roster and (str(pin.telegram_user_id), normalize_group(pin.group_name)) not in active_pairs:
+            continue
         item(pin.telegram_user_id, pin.group_id, pin.group_name, pin.name)["total_visit"] += 1
     for alert in db.query(MissingSalePhotoAlert).filter(MissingSalePhotoAlert.group_id < 0,
                                                         MissingSalePhotoAlert.window_end >= start,

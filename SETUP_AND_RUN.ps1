@@ -2,13 +2,6 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 function Resolve-Python312 {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        & py -3.12 -c "import sys; print(sys.executable)" *> $null
-        if ($LASTEXITCODE -eq 0) {
-            return @("py", "-3.12")
-        }
-    }
-
     $candidates = @(
         "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
         "C:\Python312\python.exe"
@@ -16,6 +9,19 @@ function Resolve-Python312 {
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {
             return @($candidate)
+        }
+    }
+
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        $prevErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & py -3.12 -c "import sys; print(sys.executable)" *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return @("py", "-3.12")
+            }
+        } finally {
+            $ErrorActionPreference = $prevErrorAction
         }
     }
 
@@ -66,24 +72,34 @@ foreach ($validationScript in $validationScripts) {
 }
 
 # Run one polling bot on Windows with PostgreSQL in Docker.
-docker compose stop bot 2>$null
-docker compose up -d postgres
-if ($LASTEXITCODE -ne 0) {
-    throw "Starting PostgreSQL failed."
-}
-
-$databaseReady = $false
-for ($attempt = 1; $attempt -le 30; $attempt++) {
-    docker compose exec -T postgres pg_isready *> $null
-    if ($LASTEXITCODE -eq 0) {
-        $databaseReady = $true
-        break
+$prevErrorAction = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    docker compose stop bot *> $null
+    docker compose up -d postgres
+    if ($LASTEXITCODE -ne 0) {
+        throw "Starting PostgreSQL failed."
     }
-    Start-Sleep -Seconds 2
+
+    $databaseReady = $false
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        docker compose exec -T postgres pg_isready *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $databaseReady = $true
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+} finally {
+    $ErrorActionPreference = $prevErrorAction
 }
 if (-not $databaseReady) {
     throw "PostgreSQL did not become ready within 60 seconds."
 }
 
-Write-Host "Starting Track_SA_alert and its dashboard..." -ForegroundColor Green
+if (-not $env:DASHBOARD_AUTH_REQUIRED) {
+    $env:DASHBOARD_AUTH_REQUIRED = "false"
+}
+
+Write-Host "Starting Track_SA_alert and its dashboard at http://127.0.0.1:8080 ..." -ForegroundColor Green
 & $venvPython -m app.main

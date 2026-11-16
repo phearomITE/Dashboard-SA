@@ -280,8 +280,13 @@ def seed_sa_list(db: Session) -> int:
 def load_controller_overrides(db: Session) -> int:
     """Load persisted controller changes into the shared authorization map."""
     count = 0
+    removed_stale = False
     for row in db.query(RegionalController).all():
         if int(row.user_id) <= 0:
+            if row.updated_at is None or row.updated_at < datetime(2026, 11, 14):
+                db.delete(row)
+                removed_stale = True
+                continue
             remove_controller_for_region(row.region)
         else:
             set_controller_for_region(
@@ -294,6 +299,14 @@ def load_controller_overrides(db: Session) -> int:
         for row in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.id).all()
     ]
     replace_group_controller_assignments(assignments)
+    updated_roster = False
+    for sa_row in db.query(SAList).filter(SAList.is_deleted == 0).all():
+        expected = _controller_text(sa_row.region)
+        if expected and not sa_row.controller:
+            sa_row.controller = expected
+            updated_roster = True
+    if removed_stale or updated_roster:
+        db.commit()
     return count + len(assignments)
 
 

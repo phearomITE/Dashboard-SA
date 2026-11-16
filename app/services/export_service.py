@@ -14,7 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from sqlalchemy.orm import Session
 
-from app.data.controllers import region_from_group
+from app.data.controllers import controllers_for_group, controllers_for_region, region_from_group
 from app.data.sa_members import members_for_group, normalize_username
 from app.database.models import MissingSalePhotoAlert, PinHistory, SalePhotoReport, SAList, SAUser
 from app.services.user_service import looks_like_sale_form, normalize_name
@@ -469,6 +469,7 @@ def create_sa_list_workbook(db: Session) -> Path:
     """Export the editable SA_List source, including inactive/removed rows."""
     rows = (
         db.query(SAList)
+        .filter(SAList.is_deleted == 0)
         .order_by(SAList.region, SAList.dealer, SAList.name)
         .all()
     )
@@ -487,11 +488,13 @@ def create_sa_list_workbook(db: Session) -> Path:
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
     for index, row in enumerate(rows, 1):
+        assigned = controllers_for_group(row.group_name) or controllers_for_region(row.region)
+        controller = ", ".join(c.name for c in assigned) or row.controller or ""
         ws.append([
             index, row.telegram_user_id or "", row.name,
             f"@{row.username}" if row.username else "",
             row.region, row.dealer, row.position, row.working_time,
-            row.group_name, row.controller or "",
+            row.group_name, controller,
             "Active" if row.is_active == 1 else "Removed",
             "Telegram ID" if row.telegram_user_id else "Awaiting Telegram binding",
             row.updated_at,

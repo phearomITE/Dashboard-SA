@@ -12,7 +12,10 @@ dashboard/.pnpm-store
 dashboard/dist
 backups
 .github-sync
+private-data
+.private-data
 .env.server
+.env.quick-server
 app/data/master_sa_*.json
 app/data/SA List *.xlsx
 app/data/dealer_stations.csv

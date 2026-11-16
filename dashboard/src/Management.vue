@@ -1,6 +1,6 @@
 <script setup>
 import {computed, ref, watch} from 'vue'
-import {Bell, Boxes, CalendarClock, ChevronLeft, ChevronRight, CircleHelp, Clock3, Database, Layers3, MapPin,
+import {Bell, Boxes, CalendarClock, ChevronLeft, ChevronRight, CircleHelp, Clock3, Database, Download, Layers3, MapPin,
   MoreHorizontal, Pencil, Radio, Search, ShieldCheck, SlidersHorizontal, Trash2, Users} from 'lucide-vue-next'
 import {initials,num,useWorkspace} from './workspace'
 import ProfileAvatar from './ProfileAvatar.vue'
@@ -40,6 +40,13 @@ function editController(row){
   const existing=s.data.controllers.find(c=>c.scope===scope)
   s.form={type:'memberController',row:{...row,controller_name:existing?.name||'',controller_telegram_id:existing?.telegram_id||'',controller_username:existing?.username||''}}
 }
+function exportRosterCsv(){
+  const header=['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Group','Controller','Status']
+  const lines=[header,...filtered.value.map(r=>[r.telegram_id||'',r.name||'',r.username?('@'+r.username.replace(/^@/,'')):'',r.region||'',r.dealer||'',r.position||'',r.shift||'',r.group||'',r.controller||'',r.status||''])]
+  const csv='\uFEFF'+lines.map(line=>line.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(',')).join('\r\n')
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
+  a.href=url;a.download=`sa-roster-${s.data.now.slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
+}
 </script>
 <template>
   <section v-if="lists[page]" class="panel records">
@@ -47,6 +54,7 @@ function editController(row){
       <select v-if="['roster','groups'].includes(page)" v-model="region" class="control" aria-label="Region"><option>All regions</option><option v-for="r in [...new Set(rows.map(x=>x.region).filter(Boolean))].sort()" :key="r">{{r}}</option></select>
       <select v-if="page==='roster'" v-model="controller" class="control" aria-label="Controller filter"><option>All controllers</option><option v-for="name in [...new Set(rows.map(x=>x.controller).filter(Boolean))].sort()" :key="name">{{name}}</option></select>
       <select v-if="page!=='controllers'" v-model="status" class="control" aria-label="Status filter"><option>All statuses</option><option>Enabled</option><option>Disabled</option></select>
+      <button v-if="page==='roster'" class="btn" @click="exportRosterCsv"><Download :size="15"/>Export SA roster</button>
       <span class="record-count">{{num(filtered.length)}} {{labels[page]}}</span></div>
     <div class="table-scroll"><table :class="{'roster-table':page==='roster'}"><thead><tr><th v-for="c in columns[page]" :key="c">{{c}}</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
       <tr v-for="r in visible" :key="r.id||r.scope+'-'+r.telegram_id">

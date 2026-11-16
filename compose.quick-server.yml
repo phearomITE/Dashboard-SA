@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-alert_message}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.server}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-alert_message}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - type: bind
+        source: ./private-data/master_sa_20261114.json
+        target: /app/app/data/master_sa_20261114.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./private-data/dealer_stations.csv
+        target: /app/app/data/dealer_stations.csv
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./private-data/controller_assignments.json
+        target: /app/app/data/controller_assignments.json
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-alert_message}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.server}
+      DASHBOARD_ENABLED: "true"
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 8080
+      DASHBOARD_AUTH_REQUIRED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      LOG_FILE: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "app.main"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.production_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --url http://bot:8080
+    depends_on:
+      bot:
+        condition: service_healthy
+
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.server}
+      PGDATABASE: ${DB_NAME:-alert_message}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup-postgres.sh:/backup-postgres.sh:ro
+    command: ["bash", "-c", "while true; do bash /backup-postgres.sh; sleep 86400; done"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

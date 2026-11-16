@@ -12,7 +12,7 @@ import Dialogs from './Dialogs.vue'
 import brandLogo from './assets/chip-mong-foodbev.png'
 const LiveMap = defineAsyncComponent(() => import('./LiveMap.vue'))
 
-const { s, start, refresh, signIn, signOut, notify } = useWorkspace()
+const { s, start, refresh, signIn, signOut, download, notify } = useWorkspace()
 const nav = [
   ['Workspace', [['overview','Overview',LayoutDashboard],['live-map','Live Map',MapPinned],['missing-report','Miss Report',ListChecks],['roster','SA roster',Users],['annual-leave','Annual Leave',CalendarDays]]],
   ['Management', [['products','Products',Boxes],['controllers','Controllers',ShieldCheck],['schedules','Schedules',Clock3],['settings','Settings',SlidersHorizontal]]],
@@ -95,7 +95,7 @@ async function range(e) { s.days=Number(e.target.value); s.page=1; await refresh
           <h1>{{page==='overview'?'Operations overview':current}}</h1><p>{{descriptions[page]}}</p></div>
           <div class="page-tools"><label v-if="['overview','activity'].includes(page)" class="range-control"><CalendarDays :size="15"/>
             <select :value="s.days" aria-label="Reporting period" @change="range"><option :value="7">Last 7 days</option><option :value="14">Last 14 days</option><option :value="30">Last 30 days</option></select><ChevronDown :size="13"/></label>
-            <button v-if="['overview','activity','roster'].includes(page)" class="btn" :class="{primary:page!=='roster'}" @click="s.form={type:'export',kind:page==='roster'?'roster':'missing'}"><ArrowDownToLine :size="16"/>Export<span class="wide-only"> report</span></button>
+            <button v-if="['overview','activity','roster'].includes(page)" class="btn" :class="{primary:page!=='roster'}" @click="page==='roster'?download('roster',s.data.now.slice(0,10),'all'):(s.form={type:'export',kind:'missing'})"><ArrowDownToLine :size="16"/>Export<span class="wide-only"> {{page==='roster'?'SA roster':'report'}}</span></button>
             <button v-if="['roster','products','controllers','groups'].includes(page)" class="primary" @click="s.form={type:({roster:'member',products:'product',controllers:'controller',groups:'group'})[page]}"><span class="plus">+</span>{{({roster:'Add member',products:'Add product',controllers:'Assign controller',groups:'Register group'})[page]}}</button></div>
         </div>
         <div v-if="s.error" class="error-banner" role="alert">{{s.error}}<button @click="refresh">Retry</button></div>

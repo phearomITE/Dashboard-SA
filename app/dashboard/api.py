@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 import asyncio
 from typing import Literal
@@ -7,13 +7,14 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from telegram.error import TelegramError
 
 from app.data.controllers import CONTROLLERS_BY_REGION, GLOBAL_MANAGEMENT_USER_IDS, normalize_group_code, region_from_group
 from app.data.sa_members import normalize_group
-from app.database.models import ControllerGroupAssignment, MonitoringPreferences, Product, RegionalController, SAAlertExclusion, SAList, SAUser, TelegramGroup
+from app.database.models import ControllerGroupAssignment, MissingSalePhotoAlert, MonitoringPreferences, PinHistory, Product, RegionalController, SAAlertExclusion, SAList, SAUser, TelegramGroup
 from app.dashboard.queries import activity, analytics, missing_report, snapshot
 from app.dashboard.dealer_import import import_dealers
 from app.services.live_map import map_day
@@ -90,6 +91,15 @@ class DealerControllerInput(Input):
     telegram_id: int = Field(gt=0, lt=2**52)
     name: str = Field(min_length=1, max_length=255)
     username: str = Field(default="", max_length=254)
+
+
+class MissReportEdit(Input):
+    from_date: date
+    to_date: date
+    name: str = Field(min_length=1, max_length=255)
+    region: str = Field(min_length=2, max_length=50)
+    dealer: str = Field(min_length=1, max_length=50)
+    reason: str = Field(default="", max_length=2000)
 
 
 def required(db, model, identity):
@@ -268,6 +278,61 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
         if to_date < from_date or (to_date - from_date).days > 366:
             raise HTTPException(422, "Choose a valid date range of up to 367 days.")
         return missing_report(db, from_date, to_date)
+
+    @app.put("/api/missing-report/{telegram_id}")
+    def edit_missing_report(telegram_id: int, body: MissReportEdit, db=Depends(write)):
+        if body.to_date < body.from_date or (body.to_date - body.from_date).days > 366:
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        region = body.region.upper()
+        dealer = body.dealer.upper()
+        if region not in REGIONS:
+            raise HTTPException(422, "Choose a region from R1 to R8.")
+        start = datetime.combine(body.from_date, time.min)
+        end = datetime.combine(body.to_date + timedelta(days=1), time.min)
+        now = local_now()
+        for row in db.query(SAList).filter(SAList.telegram_user_id == telegram_id, SAList.is_deleted == 0):
+            row.name, row.region, row.dealer = body.name, region, dealer
+            row.dashboard_override = 1
+            row.updated_at = now
+        for user in db.query(SAUser).filter(SAUser.telegram_user_id == telegram_id):
+            user.name, user.official_name = body.name, body.name
+            user.region, user.dealer = region, dealer
+            user.updated_at = now
+        stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
+        for pin in db.query(PinHistory).filter(PinHistory.telegram_user_id == telegram_id, stamp >= start, stamp < end):
+            pin.name, pin.region, pin.dealer = body.name, region, dealer
+        for alert in db.query(MissingSalePhotoAlert).filter(
+            MissingSalePhotoAlert.telegram_user_id == telegram_id,
+            MissingSalePhotoAlert.window_end >= start,
+            MissingSalePhotoAlert.window_end < end,
+        ):
+            alert.name, alert.region, alert.dealer = body.name, region, dealer
+            alert.reason_text = body.reason or None
+            alert.reason_submitted_at = now if body.reason else None
+        db.flush()
+        return {"message": "Miss report updated."}
+
+    @app.delete("/api/missing-report/{telegram_id}")
+    def delete_missing_report(telegram_id: int, from_date: date, to_date: date,
+                              mode: Literal["all", "alerts"] = "all", db=Depends(write)):
+        if to_date < from_date or (to_date - from_date).days > 366:
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        start = datetime.combine(from_date, time.min)
+        end = datetime.combine(to_date + timedelta(days=1), time.min)
+        db.query(MissingSalePhotoAlert).filter(
+            MissingSalePhotoAlert.telegram_user_id == telegram_id,
+            MissingSalePhotoAlert.window_end >= start,
+            MissingSalePhotoAlert.window_end < end,
+        ).delete(synchronize_session=False)
+        if mode == "all":
+            stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
+            db.query(PinHistory).filter(
+                PinHistory.telegram_user_id == telegram_id,
+                stamp >= start,
+                stamp < end,
+            ).delete(synchronize_session=False)
+        db.flush()
+        return {"message": "Miss report record deleted." if mode == "all" else "Missing alerts cleared."}
 
     @app.post("/api/products", status_code=201)
     def add_product(body: ProductInput, db=Depends(write)):

@@ -10,6 +10,7 @@ dashboard/.pnpm-store/
 dashboard/dist/
 backups/
 .env.server
+.env.quick-server
 playwright-report/
 test-results/
 app/data/master_sa_*.json
@@ -17,6 +18,7 @@ app/data/SA List *.xlsx
 app/data/dealer_stations.csv
 app/data/controller_assignments.json
 .private-data/
+private-data/
 .github-sync/
 scripts/apply_roster_update_20260914.py
 scripts/audit_20261105_controller_sa_update.py

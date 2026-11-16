@@ -1,14 +1,14 @@
 <script setup>
 import {computed,onMounted,onUnmounted,reactive,ref,watch} from 'vue'
 import {ArrowLeft,ArrowRight,Building2,ChevronRight,Download,LocateFixed,MapPin,RefreshCw,Route,Search,Upload,Users,X} from 'lucide-vue-next'
-import {initials,useWorkspace} from './workspace'
+import {initials,num,useWorkspace} from './workspace'
 import CheckinMap from './CheckinMap.vue'
 import ProfileAvatar from './ProfileAvatar.vue'
 import './live-map.css'
 
 const {s,request,notify}=useWorkspace()
 const today=ref(s.data.now.slice(0,10)),day=ref(today.value)
-const records=ref([]),dealers=ref([]),error=ref(''),loading=ref(false),firstLoad=ref(true)
+const records=ref([]),reportRecords=ref([]),missRecords=ref([]),dealers=ref([]),error=ref(''),loading=ref(false),firstLoad=ref(true)
 const selected=ref(''),focused=ref(null),search=ref(''),dialog=ref(null),file=ref(null),uploadError=ref(''),uploading=ref(false)
 const reasons=ref({})
 const clock=stamp=>new Date(stamp).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})
@@ -50,6 +50,16 @@ const employees=computed(()=>{
   }
   return [...found.values()].sort((a,b)=>b.last.at.localeCompare(a.last.at)||a.name.localeCompare(b.name))
 })
+const rosterPool=computed(()=>{
+  const term=search.value.trim().toLocaleLowerCase()
+  return (s.data?.roster||[]).filter(r=>(!filters.region||r.region===filters.region)&&(!filters.dealer||r.dealer===filters.dealer)
+    &&(!selected.value||r.telegram_id===selected.value)
+    &&(!term||[r.name,r.username,r.telegram_id].some(v=>String(v||'').toLocaleLowerCase().includes(term))))
+})
+const isOnLeave=r=>Boolean(r.leave_end&&r.leave_end.slice(0,10)>=day.value&&(!r.leave_start||r.leave_start.slice(0,10)<=day.value))
+const checkInSaCount=computed(()=>selected.value?(events.value.length?1:0):employees.value.length)
+const alCount=computed(()=>rosterPool.value.filter(isOnLeave).length)
+const missSaCount=computed(()=>Math.max(0,rosterPool.value.length-checkInSaCount.value-alCount.value))
 const employee=computed(()=>employees.value.find(e=>e.id===selected.value))
 const events=computed(()=>employee.value?filtered.value.filter(p=>p.employee_id===selected.value):filtered.value)
 const routes=computed(()=>{
@@ -70,7 +80,7 @@ watch(employees,list=>{if(selected.value&&!list.some(e=>e.id===selected.value))s
 let serial=0,timer
 async function load(reset=false){
   const run=++serial,requested=day.value
-  if(reset){records.value=[];firstLoad.value=true;clear()}
+  if(reset){records.value=[];reportRecords.value=[];missRecords.value=[];firstLoad.value=true;clear()}
   if(!requested){error.value='Choose a reporting date.';loading.value=false;return}
   loading.value=true;error.value=''
   try{
@@ -79,7 +89,7 @@ async function load(reset=false){
     const current=result.now.slice(0,10),followToday=requested===today.value
     today.value=current
     if(followToday&&requested!==current){day.value=current;return}
-    records.value=result.events;dealers.value=result.dealers;reasons.value=result.reasons||{}
+    records.value=result.events;reportRecords.value=result.reports||[];missRecords.value=result.misses||[];dealers.value=result.dealers;reasons.value=result.reasons||{}
   }catch(e){if(run===serial)error.value=e.message}
   finally{if(run===serial){loading.value=false;firstLoad.value=false}}
 }
@@ -119,7 +129,7 @@ function template(){
           <button class="btn upload-dealers" @click="openImport"><Upload :size="15"/>Dealer locations</button></div>
       </div>
     </div>
-    <div class="map-coverage" aria-label="Filtered geographic coverage"><div><strong>{{coverage.provinces}} <small>/ 25</small></strong><span>Provinces</span></div><div><strong>{{coverage.districts}} <small>/ 210</small></strong><span>Districts</span></div><div><strong>{{coverage.communes}} <small>/ 1651</small></strong><span>Communes</span></div></div>
+    <div class="map-coverage" aria-label="Filtered geographic coverage"><div><strong>{{num(checkInSaCount)}} <small>/ {{num(rosterPool.length)}}</small></strong><span>Total Check In</span></div><div><strong>{{num(alCount)}} <small>/ {{num(rosterPool.length)}}</small></strong><span>AL</span></div><div><strong>{{num(missSaCount)}} <small>/ {{num(rosterPool.length)}}</small></strong><span>Total SA Miss Report</span></div><div><strong>{{coverage.provinces}} <small>/ 25</small></strong><span>Provinces</span></div><div><strong>{{coverage.districts}} <small>/ 210</small></strong><span>Districts</span></div><div><strong>{{coverage.communes}} <small>/ 1651</small></strong><span>Communes</span></div></div>
     <div v-if="error" class="error-banner" role="alert">{{error}} <button @click="load()">Retry</button></div>
     <section class="map-board panel">
       <div class="map-pane">

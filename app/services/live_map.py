@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 from sqlalchemy import func
 
 from app.data.controllers import group_code_from_name, region_from_group
-from app.database.models import DealerLocation, MissingSalePhotoAlert, PinHistory, SAUser
+from app.database.models import DealerLocation, MissingSalePhotoAlert, PinHistory, SAList, SAUser, SalePhotoReport
 from app.services.map_geography import administrative_area, distance_km
 from app.services.time_service import local_now
 
@@ -76,11 +76,47 @@ def map_day(db, day):
         db.commit()
     from app.services.export_service import _clean_reason
     reasons = defaultdict(list)
-    alerts = db.query(MissingSalePhotoAlert).filter(MissingSalePhotoAlert.window_end >= start,
-        MissingSalePhotoAlert.window_end < end, MissingSalePhotoAlert.reason_text.isnot(None)).order_by(MissingSalePhotoAlert.window_end)
-    for alert in alerts:
-        reason = _clean_reason(alert.reason_text)
-        if reason and reason != (alert.voice_to_text or "").strip() and reason not in reasons[str(alert.telegram_user_id)]:
-            reasons[str(alert.telegram_user_id)].append(reason)
-    return dict(day=day, now=local_now(), reasons=reasons, events=sorted(events, key=lambda e: (e["at"], e["id"])),
+    roster_scope = {
+        str(r.telegram_user_id): ((r.region or "").strip().upper(), (r.dealer or "").strip().upper(), r.name, r.username or "")
+        for r in db.query(SAList).filter(SAList.is_deleted == 0, SAList.telegram_user_id.isnot(None)).all()
+    }
+    report_buckets = {}
+    for rep in db.query(SalePhotoReport).filter(SalePhotoReport.group_id < 0,
+                                                SalePhotoReport.submitted_at >= start,
+                                                SalePhotoReport.submitted_at < end).all():
+        uid = str(rep.telegram_user_id)
+        code = group_code_from_name(rep.group_name)
+        fallback = roster_scope.get(uid, ("", "", "", ""))
+        reg = (region_from_group(rep.group_name) or (code.split("-")[0] if code else "") or fallback[0]).strip().upper()
+        dlr = ((code.split("-", 1)[1] if code and "-" in code else "") or fallback[1]).strip().upper()
+        key = (uid, reg, dlr)
+        if key not in report_buckets:
+            report_buckets[key] = dict(employee_id=uid, name=rep.name or fallback[2] or "",
+                                       username=rep.username or fallback[3] or "", region=reg, dealer=dlr, count=0)
+        report_buckets[key]["count"] += 1
+
+    miss_buckets = {}
+    all_alerts = db.query(MissingSalePhotoAlert).filter(
+        MissingSalePhotoAlert.group_id < 0,
+        MissingSalePhotoAlert.window_end >= start,
+        MissingSalePhotoAlert.window_end < end,
+    ).order_by(MissingSalePhotoAlert.window_end).all()
+    for alert in all_alerts:
+        uid = str(alert.telegram_user_id)
+        code = group_code_from_name(alert.group_name)
+        fallback = roster_scope.get(uid, ("", "", "", ""))
+        reg = (alert.region or region_from_group(alert.group_name) or (code.split("-")[0] if code else "") or fallback[0]).strip().upper()
+        dlr = (alert.dealer or (code.split("-", 1)[1] if code and "-" in code else "") or fallback[1]).strip().upper()
+        key = (uid, reg, dlr)
+        if key not in miss_buckets:
+            miss_buckets[key] = dict(employee_id=uid, name=alert.name or fallback[2] or "",
+                                     username=alert.username or fallback[3] or "", region=reg, dealer=dlr, count=0)
+        miss_buckets[key]["count"] += 1
+        if alert.reason_text:
+            reason = _clean_reason(alert.reason_text)
+            if reason and reason != (alert.voice_to_text or "").strip() and reason not in reasons[uid]:
+                reasons[uid].append(reason)
+    return dict(day=day, now=local_now(), reasons=reasons,
+                reports=list(report_buckets.values()), misses=list(miss_buckets.values()),
+                events=sorted(events, key=lambda e: (e["at"], e["id"])),
                 dealers=[dict(region=d.region, dealer=d.dealer, lat=d.lat, lon=d.lon) for d in origins.values()])

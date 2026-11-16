@@ -16,6 +16,8 @@ Use [QUICK_TUNNEL_TESTING.md](QUICK_TUNNEL_TESTING.md). This test route opens di
 
 See [SERVER_DEPLOYMENT.md](SERVER_DEPLOYMENT.md) for PostgreSQL backups, Cloudflare Tunnel and Access configuration, health checks, and restore testing. Set up Cloudflare Access before making the tunnel route public.
 
+For an always-on server test without a domain, see [QUICK_SERVER_DEPLOYMENT.md](QUICK_SERVER_DEPLOYMENT.md). Its URL changes after each tunnel restart.
+
 ## Verification
 
 - Dashboard checks: `docker run --rm --network none -e TELEGRAM_BOT_TOKEN=123456:offline-validation -v <private-roster-path>:/app/app/data/master_sa_20261114.json:ro -v <private-controller-config-path>:/app/app/data/controller_assignments.json:ro telegram_sa_location_alert_bot-bot python -m scripts.validate_dashboard`
