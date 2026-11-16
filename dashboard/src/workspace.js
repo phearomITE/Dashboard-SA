@@ -42,10 +42,14 @@ export function createWorkspace() {
     const run = ++generation
     s.loading = true
     try {
-      const [data, metrics, events] = await Promise.all([request('workspace'), request('analytics?days=' + s.days),
+      const data = await request('workspace')
+      if (generation !== run) return
+      if (!s.metrics) s.metrics = { series: [], previous: {}, regional: [], visitors: 0 }
+      Object.assign(s, { data, signedIn: true, error: '' })
+      const [metrics, events] = await Promise.all([request('analytics?days=' + s.days),
         request('activity?' + new URLSearchParams({ days: s.days, kind: s.kind, page: s.page, size: 10 }))])
       if (generation !== run) return
-      Object.assign(s, { data, metrics, events: events.rows, total: events.total, signedIn: true, error: '' })
+      Object.assign(s, { metrics, events: events.rows, total: events.total })
     } catch (e) { if (generation === run) s.error = e.message }
     finally { if (generation === run) s.loading = false }
   }

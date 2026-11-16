@@ -142,6 +142,20 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
     photo_locks = {}
     photo_sem = asyncio.Semaphore(4)
     known_ids = set()
+    api_cache = {}
+
+    def cached_query(db, key, ttl_seconds, compute):
+        if preview or db.get_bind().dialect.name != "postgresql":
+            return compute()
+        now = datetime.now(timezone.utc)
+        entry = api_cache.get(key)
+        if entry and entry[0] > now:
+            return entry[1]
+        value = compute()
+        api_cache[key] = (now + timedelta(seconds=ttl_seconds), value)
+        if len(api_cache) > 256:
+            api_cache.clear()
+        return value
 
     @app.middleware("http")
     async def private_api(request: Request, call_next):
@@ -153,6 +167,8 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
                                    else next(iter(GLOBAL_MANAGEMENT_USER_IDS)))
             if auth_required and path not in {"/api/session", "/api/mode"} and not request.state.admin:
                 return JSONResponse({"detail": "Sign in to the workspace."}, status_code=401)
+            if request.method in {"POST", "PUT", "DELETE"}:
+                api_cache.clear()
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -212,7 +228,8 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
 
     @app.get("/api/workspace")
     def workspace(db=Depends(read)):
-        res = snapshot(db, bool(bot and bot.running and bot.updater and bot.updater.running), preview)
+        online = bool(bot and bot.running and bot.updater and bot.updater.running)
+        res = cached_query(db, ("workspace", online), 15, lambda: snapshot(db, online, preview))
         for item in res.get("roster", ()):
             if item.get("telegram_id", "").isdigit():
                 known_ids.add(int(item["telegram_id"]))
@@ -267,7 +284,8 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
 
     @app.get("/api/live-map")
     def live_map(day: date | None = None, db=Depends(read)):
-        return map_day(db, day or local_now().date())
+        target = day or local_now().date()
+        return cached_query(db, ("live-map", str(target)), 15, lambda: map_day(db, target))
 
     @app.get("/api/live-map/areas")
     def areas(west: float = 102, south: float = 9, east: float = 108, north: float = 15, detail: bool = False):
@@ -287,19 +305,19 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
 
     @app.get("/api/analytics")
     def metrics(days: int = Query(7, ge=1, le=30), db=Depends(read)):
-        return analytics(db, days)
+        return cached_query(db, ("analytics", days), 30, lambda: analytics(db, days))
 
     @app.get("/api/activity")
     def events(kind: Literal["all", "reports", "pins", "alerts"] = "all",
                days: int = Query(7, ge=1, le=30), page: int = Query(1, ge=1, le=100000),
                size: int = Query(10, ge=1, le=100), db=Depends(read)):
-        return activity(db, days, kind, page, size)
+        return cached_query(db, ("activity", days, kind, page, size), 15, lambda: activity(db, days, kind, page, size))
 
     @app.get("/api/missing-report")
     def missing(from_date: date, to_date: date, db=Depends(read)):
         if to_date < from_date or (to_date - from_date).days > 366:
             raise HTTPException(422, "Choose a valid date range of up to 367 days.")
-        return missing_report(db, from_date, to_date)
+        return cached_query(db, ("missing-report", str(from_date), str(to_date)), 15, lambda: missing_report(db, from_date, to_date))
 
     @app.put("/api/missing-report/{telegram_id}")
     def edit_missing_report(telegram_id: int, body: MissReportEdit, db=Depends(write)):
