@@ -4,6 +4,7 @@ import asyncio
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -134,10 +135,13 @@ def roster_link(db, row):
 
 def create_api(access, sessions, bot=None, *, preview=False, auth_required=True):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
     instrument_dashboard(app)
     cookie = "fieldline_preview" if preview else "fieldline_session"
     photo_cache = {}
     photo_locks = {}
+    photo_sem = asyncio.Semaphore(4)
+    known_ids = set()
 
     @app.middleware("http")
     async def private_api(request: Request, call_next):
@@ -153,7 +157,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if path.startswith("/api/"):
+        if path.startswith("/api/") and not path.startswith("/api/profile-photo/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -208,44 +212,58 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
 
     @app.get("/api/workspace")
     def workspace(db=Depends(read)):
-        return snapshot(db, bool(bot and bot.running and bot.updater and bot.updater.running), preview)
+        res = snapshot(db, bool(bot and bot.running and bot.updater and bot.updater.running), preview)
+        for item in res.get("roster", ()):
+            if item.get("telegram_id", "").isdigit():
+                known_ids.add(int(item["telegram_id"]))
+        for item in res.get("controllers", ()):
+            if item.get("telegram_id", "").isdigit():
+                known_ids.add(int(item["telegram_id"]))
+        return res
 
     @app.get("/api/profile-photo/{telegram_id}")
-    async def profile_photo(telegram_id: int, db=Depends(read)):
-        if telegram_id <= 0 or not (db.query(SAList.id).filter(SAList.telegram_user_id == telegram_id,
-                                                             SAList.is_deleted == 0).first() or
-                                    db.query(SAUser.id).filter(SAUser.telegram_user_id == telegram_id).first() or
-                                    db.query(ControllerGroupAssignment.id).filter(ControllerGroupAssignment.user_id == telegram_id).first() or
-                                    db.query(RegionalController.id).filter(RegionalController.user_id == telegram_id).first()):
+    async def profile_photo(telegram_id: int):
+        if telegram_id <= 0:
             raise HTTPException(404, "SA member not found.")
         now = datetime.now(timezone.utc)
         cached = photo_cache.get(telegram_id)
         if cached and cached[0] > now:
             if cached[1] is None:
                 raise HTTPException(404, "No Telegram profile photo available.")
-            return Response(cached[1], media_type="image/jpeg")
+            return Response(cached[1], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+        if telegram_id not in known_ids:
+            with sessions() as db:
+                exists = (db.query(SAList.id).filter(SAList.telegram_user_id == telegram_id,
+                                                     SAList.is_deleted == 0).first() or
+                          db.query(SAUser.id).filter(SAUser.telegram_user_id == telegram_id).first() or
+                          db.query(ControllerGroupAssignment.id).filter(ControllerGroupAssignment.user_id == telegram_id).first() or
+                          db.query(RegionalController.id).filter(RegionalController.user_id == telegram_id).first())
+                if not exists:
+                    raise HTTPException(404, "SA member not found.")
+                known_ids.add(telegram_id)
         lock = photo_locks.setdefault(telegram_id, asyncio.Lock())
         async with lock:
             cached = photo_cache.get(telegram_id)
             if cached and cached[0] > datetime.now(timezone.utc):
                 if cached[1] is None:
                     raise HTTPException(404, "No Telegram profile photo available.")
-                return Response(cached[1], media_type="image/jpeg")
+                return Response(cached[1], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
             payload = None
             if bot and bot.running:
-                try:
-                    photos = await bot.bot.get_user_profile_photos(telegram_id, limit=1)
-                    if photos.photos:
-                        file = await bot.bot.get_file(photos.photos[0][-1].file_id)
-                        payload = bytes(await file.download_as_bytearray())
-                except TelegramError:
-                    pass
+                async with photo_sem:
+                    try:
+                        photos = await bot.bot.get_user_profile_photos(telegram_id, limit=1)
+                        if photos.photos:
+                            file = await bot.bot.get_file(photos.photos[0][-1].file_id)
+                            payload = bytes(await file.download_as_bytearray())
+                    except TelegramError:
+                        pass
             photo_cache[telegram_id] = (datetime.now(timezone.utc) + timedelta(hours=6 if payload else 1), payload)
             if len(photo_cache) > 5000:
                 photo_cache.clear()
             if payload is None:
                 raise HTTPException(404, "No Telegram profile photo available.")
-            return Response(payload, media_type="image/jpeg")
+            return Response(payload, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get("/api/live-map")
     def live_map(day: date | None = None, db=Depends(read)):

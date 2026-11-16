@@ -95,7 +95,7 @@ async function load(reset=false){
 }
 watch(day,()=>load(true))
 function poll(){if(!document.hidden&&day.value===today.value&&!loading.value&&!uploading.value)load()}
-onMounted(()=>{load();timer=setInterval(poll,10000);document.addEventListener('visibilitychange',poll)})
+onMounted(()=>{load();timer=setInterval(poll,30000);document.addEventListener('visibilitychange',poll)})
 onUnmounted(()=>{serial++;clearInterval(timer);document.removeEventListener('visibilitychange',poll)})
 function openImport(){file.value=null;uploadError.value='';dialog.value.querySelector('input').value='';dialog.value.showModal()}
 async function upload(){
