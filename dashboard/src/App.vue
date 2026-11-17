@@ -1,7 +1,7 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
-import { Activity, ArrowDownToLine, Boxes, CalendarDays, ChevronDown, ChevronRight,
-  Clock3, Layers3, LayoutDashboard, ListChecks, LogOut, MapPinned, Menu, PanelLeft, Radio,
+import { Activity, ArrowDownToLine, CalendarDays, ChevronDown, ChevronRight,
+  Layers3, LayoutDashboard, ListChecks, LogOut, MapPinned, Menu, PanelLeft, Radio,
   RefreshCw, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-vue-next'
 import { dateLabel, useWorkspace } from './workspace'
 import Overview from './Overview.vue'
@@ -15,7 +15,7 @@ const LiveMap = defineAsyncComponent(() => import('./LiveMap.vue'))
 const { s, start, refresh, signIn, signOut, download, notify } = useWorkspace()
 const nav = [
   ['Workspace', [['overview','Overview',LayoutDashboard],['live-map','Live Map',MapPinned],['missing-report','Miss Report',ListChecks],['roster','SA roster',Users],['annual-leave','Annual Leave',CalendarDays]]],
-  ['Management', [['products','Products',Boxes],['controllers','Controllers',ShieldCheck],['schedules','Schedules',Clock3],['settings','Settings',SlidersHorizontal]]],
+  ['Management', [['controllers','Controllers',ShieldCheck],['settings','Settings',SlidersHorizontal]]],
 ]
 const names = Object.fromEntries(nav.flatMap(([,items]) => items.map(([k,n]) => [k,n])))
 const descriptions = {overview:'A live view of your field team and reporting activity.',activity:'Review reports, location pins, and missing alerts across your groups.',
@@ -23,8 +23,8 @@ const descriptions = {overview:'A live view of your field team and reporting act
   roster:'Manage field members, working shifts, and alert eligibility.',groups:'Manage the Telegram groups connected to your bot.',
   'annual-leave':'Schedule full-day, morning, afternoon, or date-range leave for SA members.',
   'missing-report':'Review SA visits, missing reports, and written reasons.',
-  products:'Manage the products available in your field catalog.',controllers:'Manage regional and dealer-level controller assignments.',
-  schedules:'Explore the reporting windows used by each working shift.',settings:'Manage alert delivery and workspace access.'}
+  controllers:'Manage regional and dealer-level controller assignments.',
+  settings:'Manage alert delivery and workspace access.'}
 const page = ref('overview'), alGroup = ref(''), mobile = ref(false), code = ref(''), loginError = ref(''), loginBusy = ref(false)
 const current = computed(() => names[page.value] || names.overview)
 function route() {
@@ -96,7 +96,7 @@ async function range(e) { s.days=Number(e.target.value); s.page=1; await refresh
           <div class="page-tools"><label v-if="['overview','activity'].includes(page)" class="range-control"><CalendarDays :size="15"/>
             <select :value="s.days" aria-label="Reporting period" @change="range"><option :value="7">Last 7 days</option><option :value="14">Last 14 days</option><option :value="30">Last 30 days</option></select><ChevronDown :size="13"/></label>
             <button v-if="['overview','activity','roster'].includes(page)" class="btn" :class="{primary:page!=='roster'}" @click="page==='roster'?download('roster',s.data.now.slice(0,10),'all'):(s.form={type:'export',kind:'missing'})"><ArrowDownToLine :size="16"/>Export<span class="wide-only"> {{page==='roster'?'SA roster':'report'}}</span></button>
-            <button v-if="['roster','products','controllers','groups'].includes(page)" class="primary" @click="s.form={type:({roster:'member',products:'product',controllers:'controller',groups:'group'})[page]}"><span class="plus">+</span>{{({roster:'Add member',products:'Add product',controllers:'Assign controller',groups:'Register group'})[page]}}</button></div>
+            <button v-if="['roster','controllers','groups'].includes(page)" class="primary" @click="s.form={type:({roster:'member',controllers:'controller',groups:'group'})[page]}"><span class="plus">+</span>{{({roster:'Add member',controllers:'Assign controller',groups:'Register group'})[page]}}</button></div>
         </div>
         <div v-if="s.error" class="error-banner" role="alert">{{s.error}}<button @click="refresh">Retry</button></div>
         <Overview v-if="page==='overview'||page==='activity'" :activity-only="page==='activity'" @navigate="go"/>
