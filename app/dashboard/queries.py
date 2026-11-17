@@ -50,12 +50,16 @@ def snapshot(db, online, preview):
                            leave_reason=user.alert_pause_reason if user else None))
     counts = Counter(r["group_id"] for r in roster if r["enabled"])
     prefs = db.get(MonitoringPreferences, 1)
+    bot_paused_until = prefs.bot_paused_until if (prefs and prefs.bot_paused_until and prefs.bot_paused_until > now) else None
+    bot_pause_reason = prefs.bot_pause_reason if bot_paused_until else None
     controllers = [dict(name=c.name, telegram_id=str(c.user_id), username=c.username, scope=region, regional=True)
                    for region, items in CONTROLLERS_BY_REGION.items() for c in items]
     controllers.extend(dict(name=c.name, telegram_id=str(c.user_id), username=c.username, scope=c.group_code, regional=False)
                        for c in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.group_code))
     return dict(now=now, master_date=None if preview else "2026-11-14", timezone=get_settings().APP_TIMEZONE, online=online, preview=preview,
                 alerts_enabled=prefs is None or prefs.alerts_enabled,
+                bot_paused_until=bot_paused_until,
+                bot_pause_reason=bot_pause_reason,
                 controller_alerts_enabled=prefs is None or prefs.controller_alerts_enabled,
                 controller_alert_group_id=str(prefs.controller_alert_group_id if prefs and prefs.controller_alert_group_id else -1004464440125),
                 roster=roster, controllers=controllers,

@@ -1686,51 +1686,13 @@ def _eligible_users_query(
     return query
 
 
-def _submitted_user_ids_for_interval(
-    db: Session,
+def _resolve_submitted_user_ids(
     users: list[SAUser],
-    group_id: int,
-    interval_start: datetime,
-    interval_end: datetime,
+    reports: list[SalePhotoReport],
+    pins: list[PinHistory],
 ) -> set[int]:
-    """Resolve valid submissions without fragile correlated SQL.
-
-    A valid submission requires both a sale form/photo and a pin in the same
-    Telegram group and alert window. Identity matching rules are deliberately
-    strict:
-
-    1. Stable Telegram user ID.
-    2. A username only when that username belongs to exactly one official user.
-    3. A normalized name only when that name belongs to exactly one official user.
-
-    This prevents false missing alerts after a Telegram profile change while
-    also preventing one person's submission from being credited to another user
-    with a duplicate or similar name.
-    """
     if not users:
         return set()
-
-    grace_start = interval_start_with_grace(interval_start)
-    grace_end = interval_end_with_grace(interval_end)
-
-    reports = (
-        db.query(SalePhotoReport)
-        .filter(
-            SalePhotoReport.group_id == group_id,
-            SalePhotoReport.submitted_at >= grace_start,
-            SalePhotoReport.submitted_at <= grace_end,
-        )
-        .all()
-    )
-    pins = (
-        db.query(PinHistory)
-        .filter(
-            PinHistory.group_id == group_id,
-            PinHistory.pinned_at >= grace_start,
-            PinHistory.pinned_at <= grace_end,
-        )
-        .all()
-    )
 
     by_telegram_id: dict[int, SAUser] = {}
     username_owners: dict[str, list[SAUser]] = {}
@@ -1776,21 +1738,14 @@ def _submitted_user_ids_for_interval(
     eligible_by_db_id = {int(user.id): user for user in users if user.id is not None}
 
     def resolve(activity) -> SAUser | None:
-        # 1) Canonical DB identity written at the moment the form/photo/pin is
-        # received. This is the strongest key and is unaffected by Telegram
-        # display-name or username changes.
         sa_user_id = int(getattr(activity, "sa_user_id", 0) or 0)
         if sa_user_id > 0 and sa_user_id in eligible_by_db_id:
             return eligible_by_db_id[sa_user_id]
 
-        # 2) Stable Telegram numeric user ID. Old rows created before the
-        # canonical-id migration are still resolved correctly this way.
         telegram_user_id = int(getattr(activity, "telegram_user_id", 0) or 0)
         if telegram_user_id > 0 and telegram_user_id in by_telegram_id:
             return by_telegram_id[telegram_user_id]
 
-        # 3/4) Backward-compatible fallbacks for historic rows. Only unique
-        # username/name values inside this exact group + flow are accepted.
         username_key = _identity_username(getattr(activity, "username", None))
         if username_key and username_key in unique_usernames:
             return unique_usernames[username_key]
@@ -1799,10 +1754,6 @@ def _submitted_user_ids_for_interval(
         if name_key and name_key in unique_names:
             return unique_names[name_key]
 
-        # Repair no-username submissions recorded before automatic binding was
-        # available (for example "Rin Saroth SA KSV5" versus roster name
-        # "Rin Saroth SA Water KSV5 R2").  The core must be unique within the
-        # exact group/flow, so two people can never be merged by this fallback.
         for user in users:
             core_key = identity_name_core(
                 getattr(activity, "name", None),
@@ -1825,13 +1776,6 @@ def _submitted_user_ids_for_interval(
     }
     submitted = form_user_ids & pin_user_ids
 
-    # Atomic reply workflow: when an SA replies to their own photo with a
-    # Telegram GPS location, receive_location() stores reply_lat/reply_lon on
-    # the linked report.  That row is direct proof of both requirements and
-    # must remain valid even if a legacy duplicate SA row caused the separate
-    # PinHistory record to retain a stale sa_user_id.  The handler verifies the
-    # photo sender and GPS sender are the same Telegram account before writing
-    # these coordinates.
     linked_form_and_gps_user_ids = {
         user.id
         for activity in reports
@@ -1841,9 +1785,6 @@ def _submitted_user_ids_for_interval(
     }
     submitted.update(linked_form_and_gps_user_ids)
 
-    # Production safety: pair report + pin by the same stable Telegram sender.
-    # This repairs old cases where duplicate-row cleanup left one half of the
-    # pair pointing at a stale canonical sa_user_id.
     reports_by_tid: dict[int, list[SalePhotoReport]] = {}
     pins_by_tid: dict[int, list[PinHistory]] = {}
     for activity in reports:
@@ -1883,6 +1824,54 @@ def _submitted_user_ids_for_interval(
             submitted.add(next(iter(pair_users.values())).id)
 
     return submitted
+
+
+def _submitted_user_ids_for_interval(
+    db: Session,
+    users: list[SAUser],
+    group_id: int,
+    interval_start: datetime,
+    interval_end: datetime,
+) -> set[int]:
+    """Resolve valid submissions without fragile correlated SQL.
+
+    A valid submission requires both a sale form/photo and a pin in the same
+    Telegram group and alert window. Identity matching rules are deliberately
+    strict:
+
+    1. Stable Telegram user ID.
+    2. A username only when that username belongs to exactly one official user.
+    3. A normalized name only when that name belongs to exactly one official user.
+
+    This prevents false missing alerts after a Telegram profile change while
+    also preventing one person's submission from being credited to another user
+    with a duplicate or similar name.
+    """
+    if not users:
+        return set()
+
+    grace_start = interval_start_with_grace(interval_start)
+    grace_end = interval_end_with_grace(interval_end)
+
+    reports = (
+        db.query(SalePhotoReport)
+        .filter(
+            SalePhotoReport.group_id == group_id,
+            SalePhotoReport.submitted_at >= grace_start,
+            SalePhotoReport.submitted_at <= grace_end,
+        )
+        .all()
+    )
+    pins = (
+        db.query(PinHistory)
+        .filter(
+            PinHistory.group_id == group_id,
+            PinHistory.pinned_at >= grace_start,
+            PinHistory.pinned_at <= grace_end,
+        )
+        .all()
+    )
+    return _resolve_submitted_user_ids(users, reports, pins)
 
 
 def get_missing_sale_photo_users_for_interval(

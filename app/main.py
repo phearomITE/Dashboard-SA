@@ -23,6 +23,8 @@ from app.bot.handlers import (
     annual_leave,
     bind_group_member_activity,
     bind_sa,
+    break_bot_1h,
+    break_bot_2h,
     chatid,
     change_management,
     delete_pin,
@@ -32,6 +34,7 @@ from app.bot.handlers import (
     pin,
     remove_sa,
     restore_sa,
+    resume_bot,
     receive_location,
     receive_sale_photo,
     receive_sale_text,
@@ -119,6 +122,9 @@ ALL_COMMANDS = {
     "test_afternoon": test_afternoon,
     "test_alert": test_alert,
     "test_alert_all_time": test_alert_all_time,
+    "break_bot_1h": break_bot_1h,
+    "break_bot_2h": break_bot_2h,
+    "resume_bot": resume_bot,
 }
 
 
@@ -213,6 +219,9 @@ def create_bot() -> Application:
     app.add_handler(CommandHandler("test_afternoon", test_afternoon))
     app.add_handler(CommandHandler("test_alert", test_alert))
     app.add_handler(CommandHandler("test_alert_all_time", test_alert_all_time))
+    app.add_handler(CommandHandler("break_bot_1h", break_bot_1h))
+    app.add_handler(CommandHandler("break_bot_2h", break_bot_2h))
+    app.add_handler(CommandHandler("resume_bot", resume_bot))
     # Group -1 records typed text and photo-caption reasons. Voice/audio is not
     # processed, downloaded, transcribed, or stored by this build.
     # A photo is included so its caption can be stored as the reason when the

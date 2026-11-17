@@ -18,7 +18,7 @@ def add_missing_columns() -> None:
     try:
         with engine.connect() as chk:
             done = chk.execute(
-                text("SELECT 1 FROM applied_sa_masters WHERE version = 'schema-2026-11-16'")
+                text("SELECT 1 FROM applied_sa_masters WHERE version = 'schema-2026-11-17'")
             ).scalar()
             if done == 1:
                 return
@@ -29,12 +29,18 @@ def add_missing_columns() -> None:
     tables = inspector.get_table_names()
 
     with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SET LOCAL lock_timeout = '5000ms'"))
         if "monitoring_preferences" in tables:
             preferences_columns = _columns(conn, "monitoring_preferences")
             if "controller_alerts_enabled" not in preferences_columns:
                 conn.execute(text("ALTER TABLE monitoring_preferences ADD COLUMN controller_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
             if "controller_alert_group_id" not in preferences_columns:
                 conn.execute(text("ALTER TABLE monitoring_preferences ADD COLUMN controller_alert_group_id BIGINT DEFAULT -1004464440125"))
+            if "bot_paused_until" not in preferences_columns:
+                conn.execute(text("ALTER TABLE monitoring_preferences ADD COLUMN bot_paused_until TIMESTAMP WITHOUT TIME ZONE"))
+            if "bot_pause_reason" not in preferences_columns:
+                conn.execute(text("ALTER TABLE monitoring_preferences ADD COLUMN bot_pause_reason VARCHAR(100)"))
         if "telegram_groups" not in tables:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS telegram_groups (
@@ -416,4 +422,4 @@ def add_missing_columns() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_controller_group_user ON controller_group_assignments (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_controller_group_code ON controller_group_assignments (group_code)"))
         if "applied_sa_masters" in tables:
-            conn.execute(text("INSERT INTO applied_sa_masters (version) VALUES ('schema-2026-11-16') ON CONFLICT DO NOTHING"))
+            conn.execute(text("INSERT INTO applied_sa_masters (version) VALUES ('schema-2026-11-17') ON CONFLICT DO NOTHING"))

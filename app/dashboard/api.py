@@ -49,6 +49,11 @@ class ControllerAlerts(Input):
     group_id: int = Field(lt=0, ge=-(2**52))
 
 
+class BotBreak(Input):
+    minutes: int = Field(ge=0, le=1440)
+    reason: str = Field(default="Dashboard Settings", max_length=100)
+
+
 class ProductInput(Input):
     name: str = Field(min_length=1, max_length=160)
     sku: str = Field(min_length=1, max_length=64)
@@ -587,6 +592,24 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
         prefs.alerts_enabled = body.enabled
         db.add(prefs)
         return {"ok": True}
+
+    @app.put("/api/monitoring/break")
+    def monitoring_break(body: BotBreak, db=Depends(write)):
+        prefs = db.get(MonitoringPreferences, 1) or MonitoringPreferences(id=1)
+        if body.minutes <= 0:
+            prefs.bot_paused_until = None
+            prefs.bot_pause_reason = None
+            db.add(prefs)
+            return {"bot_paused_until": None, "message": "Automatic bot alerts resumed."}
+        until = local_now() + timedelta(minutes=body.minutes)
+        prefs.bot_paused_until = until
+        prefs.bot_pause_reason = body.reason or "Dashboard Settings"
+        db.add(prefs)
+        label = "1 hour" if body.minutes == 60 else "2 hours" if body.minutes == 120 else f"{body.minutes} min"
+        return {
+            "bot_paused_until": until,
+            "message": f"Bot automatic alerts paused for {label} (until {until:%H:%M}).",
+        }
 
     @app.put("/api/monitoring/controller-alerts")
     def controller_alerts(body: ControllerAlerts, db=Depends(write)):

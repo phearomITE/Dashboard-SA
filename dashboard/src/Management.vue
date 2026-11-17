@@ -9,6 +9,18 @@ const {s,save,request,refresh,notify}=useWorkspace()
 const query=ref(''), status=ref('All statuses'), region=ref('All regions'), controller=ref('All controllers'), currentPage=ref(1), shift=ref(0)
 const uploadOpen=ref(false),masterFile=ref(null),uploadBusy=ref(false),uploadError=ref('')
 const controllerGroupId=ref(s.data.controller_alert_group_id||'-1004464440125'), controllerAlertsEnabled=ref(s.data.controller_alerts_enabled),settingsBusy=ref(false),settingsError=ref('')
+const breakMinutes=ref(60), breakBusy=ref(false), breakError=ref('')
+const breakActive=computed(()=>Boolean(s.data.bot_paused_until&&new Date(s.data.bot_paused_until)>new Date(s.data.now||Date.now())))
+const breakUntilLabel=computed(()=>{
+  if(!breakActive.value)return ''
+  const d=new Date(s.data.bot_paused_until)
+  return Number.isNaN(d.getTime())?String(s.data.bot_paused_until):d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+' ('+d.toLocaleDateString()+')'
+})
+async function applyBotBreak(minutes){
+  breakBusy.value=true;breakError.value=''
+  try{await save('monitoring/break','PUT',{minutes,reason:'Dashboard Settings'})}
+  catch(e){breakError.value=e.message}finally{breakBusy.value=false}
+}
 async function saveControllerAlerts(){
   if(!/^-\d+$/.test(controllerGroupId.value)){settingsError.value='Enter a negative Telegram group ID.';return}
   settingsBusy.value=true;settingsError.value=''
@@ -120,6 +132,20 @@ async function submitUploadMaster(){
     <section class="panel padded settings-panel"><div class="panel-head"><div><h2>Alert delivery</h2><p>Control scheduled missing-report notifications across groups.</p></div><Bell class="quiet"/></div>
       <div class="setting-row"><span class="icon-tile teal"><Radio :size="19"/></span><div><strong>Scheduled alerts</strong><small>{{s.data.alerts_enabled?'Scheduled checks can send Telegram alerts.':'Scheduled notifications are paused.'}}</small></div>
         <button class="toggle" role="switch" aria-label="Scheduled alerts" :aria-checked="s.data.alerts_enabled" @click="s.form={type:'monitoring'}"><i/></button></div>
+      <div class="setting-row"><span class="icon-tile violet"><Clock3 :size="19"/></span><div><strong>Bot break</strong><small>{{breakActive?`Automatic alerts paused until ${breakUntilLabel}${s.data.bot_pause_reason?' · '+s.data.bot_pause_reason:''}`:'Automatic alerts are active. Check-in photos & pins always stay saved.'}}</small></div>
+        <div class="flex items-center gap-2 ml-auto" style="flex-wrap:wrap">
+          <select v-model.number="breakMinutes" aria-label="Break duration" style="border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px">
+            <option :value="30">30 minutes</option>
+            <option :value="60">1 hour (/break_bot_1h)</option>
+            <option :value="120">2 hours (/break_bot_2h)</option>
+            <option :value="180">3 hours</option>
+            <option :value="240">4 hours</option>
+          </select>
+          <button type="button" class="primary" :disabled="breakBusy" @click="applyBotBreak(breakMinutes)">{{breakBusy?'Saving…':'Set break'}}</button>
+          <button v-if="breakActive" type="button" class="btn" :disabled="breakBusy" @click="applyBotBreak(0)">Resume now</button>
+        </div>
+      </div>
+      <p v-if="breakError" class="error-text" role="alert">{{breakError}}</p>
       <div class="setting-row"><span class="icon-tile violet"><Clock3 :size="19"/></span><div><strong>Bot timezone</strong><small>{{s.data.timezone}}</small></div></div>
     </section>
     <section class="panel padded settings-panel"><div class="panel-head"><div><h2>Controller alerts</h2><p>Send a controller-labeled copy when a missing alert is delivered to its SA group.</p></div><ShieldCheck class="quiet"/></div>

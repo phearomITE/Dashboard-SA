@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 import re
@@ -20,6 +20,7 @@ from telegram.ext import ContextTypes
 from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.data.controllers import (
+    CONTROLLERS_BY_REGION,
     EXPORT_AUDIT_RECIPIENTS,
     GLOBAL_MANAGEMENT_USER_IDS,
     controller_user_ids_for_group,
@@ -30,7 +31,7 @@ from app.data.controllers import (
     region_from_group,
 )
 from app.database.database import SessionLocal
-from app.database.models import PinHistory, SAList, SAUser, VoiceReasonHistory
+from app.database.models import MonitoringPreferences, PinHistory, SAList, SAUser, VoiceReasonHistory
 from app.services.export_service import build_missing_export_rows, create_missing_export_workbook, create_sa_list_workbook
 from app.services.formatter import controller_label, sale_photo_missing_alert_message, special_window_alert_message, status_message, user_label
 from app.services.shift_config import ALL_FLOWS, previous_window_for_now
@@ -2628,3 +2629,78 @@ async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Name: {telegram_name(user)}\n"
         f"Username: {username}"
     )
+
+
+async def _handle_bot_break_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    command_key: str,
+    minutes: int,
+) -> None:
+    if not claim_command(update, context, command_key):
+        return
+    if update.effective_user is None or update.effective_chat is None:
+        return
+
+    uid = int(update.effective_user.id)
+    controller_ids = {c.user_id for items in CONTROLLERS_BY_REGION.values() for c in items}
+    allowed = uid in GLOBAL_MANAGEMENT_USER_IDS or uid in controller_ids
+    if not allowed and not is_private_chat(update):
+        allowed = await is_group_admin(update, context)
+    if not allowed:
+        await safe_reply(
+            update,
+            context,
+            permission_message(update, "❌ Only management administrators or controllers can pause automatic bot behavior."),
+        )
+        return
+
+    now = local_now()
+    db = SessionLocal()
+    try:
+        prefs = db.get(MonitoringPreferences, 1)
+        if prefs is None:
+            prefs = MonitoringPreferences(id=1, alerts_enabled=True, controller_alerts_enabled=True)
+            db.add(prefs)
+        if minutes <= 0:
+            prefs.bot_paused_until = None
+            prefs.bot_pause_reason = None
+            db.commit()
+            await safe_reply(
+                update,
+                context,
+                "✅ Automatic bot alerts resumed immediately.",
+            )
+            return
+
+        until = now + timedelta(minutes=minutes)
+        prefs.bot_paused_until = until
+        prefs.bot_pause_reason = f"/{command_key}"
+        db.commit()
+    finally:
+        db.close()
+
+    hours_label = "1 hour" if minutes == 60 else "2 hours" if minutes == 120 else f"{minutes} minutes"
+    await safe_reply(
+        update,
+        context,
+        f"⏸ <b>Automatic bot alerts paused for {hours_label}</b>\n\n"
+        f"Resumes at: <b>{until:%H:%M}</b> ({until:%d/%m/%Y})\n"
+        "Check-in photos, forms, and location pins continue saving in the background.",
+        parse_mode="HTML",
+    )
+
+
+async def break_bot_1h(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pause automatic bot missing-alert behavior for 1 hour."""
+    await _handle_bot_break_command(update, context, "break_bot_1h", 60)
+
+
+async def break_bot_2h(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pause automatic bot missing-alert behavior for 2 hours."""
+    await _handle_bot_break_command(update, context, "break_bot_2h", 120)
+
+
+async def resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Resume automatic bot missing-alert behavior immediately."""
+    await _handle_bot_break_command(update, context, "resume_bot", 0)

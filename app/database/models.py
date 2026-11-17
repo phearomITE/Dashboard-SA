@@ -31,6 +31,8 @@ class MonitoringPreferences(Base):
     alerts_enabled: Mapped[bool] = mapped_column(default=True)
     controller_alerts_enabled: Mapped[bool] = mapped_column(default=True)
     controller_alert_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=-1004464440125)
+    bot_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    bot_pause_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class TelegramGroup(Base):
