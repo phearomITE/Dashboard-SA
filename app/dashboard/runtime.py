@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import socket
+import threading
 from contextlib import nullcontext
 
 import uvicorn
@@ -53,11 +54,17 @@ async def start_dashboard(application):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind((settings.DASHBOARD_HOST, port))
+        bot_loop = asyncio.get_running_loop()
         server = DashboardServer(uvicorn.Config(create_api(access, SessionLocal, application,
-            auth_required=settings.DASHBOARD_AUTH_REQUIRED),
+            auth_required=settings.DASHBOARD_AUTH_REQUIRED, bot_loop=bot_loop),
             host=settings.DASHBOARD_HOST, port=port, log_config=None, access_log=False))
-        task = asyncio.create_task(server.serve(sockets=[sock]))
-        application.bot_data["dashboard_server"] = (server, task, sock)
+
+        def _serve():
+            asyncio.run(server.serve(sockets=[sock]))
+
+        thread = threading.Thread(target=_serve, name="dashboard-uvicorn", daemon=True)
+        thread.start()
+        application.bot_data["dashboard_server"] = (server, thread, sock)
     except OSError:
         sock.close()
         logger.exception("Dashboard listener unavailable. Check DASHBOARD_HOST and DASHBOARD_PORT.")
@@ -66,9 +73,9 @@ async def start_dashboard(application):
 async def stop_dashboard(application):
     handle = application.bot_data.pop("dashboard_server", None)
     if handle:
-        server, task, sock = handle
+        server, thread, sock = handle
         server.should_exit = True
         try:
-            await task
+            await asyncio.to_thread(thread.join, 5.0)
         finally:
             sock.close()

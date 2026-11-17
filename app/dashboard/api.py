@@ -134,7 +134,7 @@ def roster_link(db, row):
     return groups[0], next(iter(matches), None)
 
 
-def create_api(access, sessions, bot=None, *, preview=False, auth_required=True):
+def create_api(access, sessions, bot=None, *, preview=False, auth_required=True, bot_loop=None):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(GZipMiddleware, minimum_size=500)
     instrument_dashboard(app)
@@ -144,6 +144,25 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
     photo_sem = asyncio.Semaphore(4)
     known_ids = set()
     api_cache = {}
+
+    async def run_on_bot_loop(coro):
+        if bot_loop is not None and bot_loop.is_running():
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, bot_loop))
+        return await coro
+
+    def cached_endpoint(key, ttl_seconds, compute):
+        if not preview:
+            now = datetime.now(timezone.utc)
+            entry = api_cache.get(key)
+            if entry and entry[0] > now:
+                return entry[1]
+        with sessions() as db:
+            value = compute(db)
+            if not preview and db.get_bind().dialect.name == "postgresql":
+                api_cache[key] = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds), value)
+                if len(api_cache) > 256:
+                    api_cache.clear()
+            return value
 
     def cached_query(db, key, ttl_seconds, compute):
         if preview or db.get_bind().dialect.name != "postgresql":
@@ -228,9 +247,9 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
         return result
 
     @app.get("/api/workspace")
-    def workspace(db=Depends(read)):
+    def workspace():
         online = bool(bot and bot.running and bot.updater and bot.updater.running)
-        res = cached_query(db, ("workspace", online), 15, lambda: snapshot(db, online, preview))
+        res = cached_endpoint(("workspace", online), 30, lambda db: snapshot(db, online, preview))
         for item in res.get("roster", ()):
             if item.get("telegram_id", "").isdigit():
                 known_ids.add(int(item["telegram_id"]))
@@ -270,10 +289,13 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
             if bot and bot.running:
                 async with photo_sem:
                     try:
-                        photos = await bot.bot.get_user_profile_photos(telegram_id, limit=1)
-                        if photos.photos:
-                            file = await bot.bot.get_file(photos.photos[0][-1].file_id)
-                            payload = bytes(await file.download_as_bytearray())
+                        async def _fetch_photo():
+                            photos = await bot.bot.get_user_profile_photos(telegram_id, limit=1)
+                            if photos.photos:
+                                file = await bot.bot.get_file(photos.photos[0][-1].file_id)
+                                return bytes(await file.download_as_bytearray())
+                            return None
+                        payload = await run_on_bot_loop(_fetch_photo())
                     except TelegramError:
                         pass
             photo_cache[telegram_id] = (datetime.now(timezone.utc) + timedelta(hours=6 if payload else 1), payload)
@@ -284,9 +306,9 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
             return Response(payload, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get("/api/live-map")
-    def live_map(day: date | None = None, db=Depends(read)):
+    def live_map(day: date | None = None):
         target = day or local_now().date()
-        return cached_query(db, ("live-map", str(target)), 15, lambda: map_day(db, target))
+        return cached_endpoint(("live-map", str(target)), 15, lambda db: map_day(db, target))
 
     @app.get("/api/live-map/areas")
     def areas(west: float = 102, south: float = 9, east: float = 108, north: float = 15, detail: bool = False):
@@ -305,20 +327,20 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
         return await run_in_threadpool(import_dealers, db, bytes(content), format)
 
     @app.get("/api/analytics")
-    def metrics(days: int = Query(7, ge=1, le=30), db=Depends(read)):
-        return cached_query(db, ("analytics", days), 30, lambda: analytics(db, days))
+    def metrics(days: int = Query(7, ge=1, le=30)):
+        return cached_endpoint(("analytics", days), 30, lambda db: analytics(db, days))
 
     @app.get("/api/activity")
     def events(kind: Literal["all", "reports", "pins", "alerts"] = "all",
                days: int = Query(7, ge=1, le=30), page: int = Query(1, ge=1, le=100000),
-               size: int = Query(10, ge=1, le=100), db=Depends(read)):
-        return cached_query(db, ("activity", days, kind, page, size), 15, lambda: activity(db, days, kind, page, size))
+               size: int = Query(10, ge=1, le=100)):
+        return cached_endpoint(("activity", days, kind, page, size), 15, lambda db: activity(db, days, kind, page, size))
 
     @app.get("/api/missing-report")
-    def missing(from_date: date, to_date: date, db=Depends(read)):
+    def missing(from_date: date, to_date: date):
         if to_date < from_date or (to_date - from_date).days > 366:
             raise HTTPException(422, "Choose a valid date range of up to 367 days.")
-        return cached_query(db, ("missing-report", str(from_date), str(to_date)), 15, lambda: missing_report(db, from_date, to_date))
+        return cached_endpoint(("missing-report", str(from_date), str(to_date)), 15, lambda db: missing_report(db, from_date, to_date))
 
     @app.put("/api/missing-report/{telegram_id}")
     def edit_missing_report(telegram_id: int, body: MissReportEdit, db=Depends(write)):
@@ -581,7 +603,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
         if not bot:
             raise HTTPException(409, "Group registration needs a live Telegram connection.")
         try:
-            chat = await bot.bot.get_chat(gid)
+            chat = await run_on_bot_loop(bot.bot.get_chat(gid))
         except TelegramError:
             raise HTTPException(422, "The bot cannot access this Telegram group.")
         if chat.type not in {"group", "supergroup"}:
@@ -602,8 +624,8 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True)
             window = previous_window_for_now(now, flow.label)
             if window:
                 start, end = window.interval(now)
-                count = await _send_missing_alert_for_group_window(
-                    bot, db, group, start, end, window.title, window.include_submitted, flow.key)
+                count = await run_on_bot_loop(_send_missing_alert_for_group_window(
+                    bot, db, group, start, end, window.title, window.include_submitted, flow.key))
                 if count < 0:
                     raise HTTPException(502, "Telegram delivery failed. Check the group before retrying.")
                 sent += count

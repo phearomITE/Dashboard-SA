@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import time
 from types import SimpleNamespace
 import httpx
 
@@ -308,6 +309,83 @@ def parse_export_date(args: list[str]) -> datetime.date | None:
     return None
 
 
+_BOUND_PROFILE_CACHE: dict[tuple[int, int], tuple[str, str, float]] = {}
+
+
+def _sync_member_activity(
+    user_id: int,
+    current_name: str,
+    current_username: str | None,
+    group_id: int,
+    group_title: str | None,
+) -> None:
+    db = SessionLocal()
+    try:
+        existing = (
+            db.query(SAUser)
+            .filter(
+                SAUser.group_id == group_id,
+                SAUser.telegram_user_id == user_id,
+            )
+            .first()
+        )
+        if (
+            existing is not None
+            and existing.is_from_list == 1
+            and existing.region
+            and existing.dealer
+            and existing.position
+        ):
+            sync_bound_telegram_profile(
+                db,
+                telegram_user_id=user_id,
+                group_id=group_id,
+                current_name=current_name,
+                current_username=current_username,
+            )
+            if len(_BOUND_PROFILE_CACHE) > 2000:
+                _BOUND_PROFILE_CACHE.clear()
+            _BOUND_PROFILE_CACHE[(group_id, user_id)] = (
+                current_name,
+                current_username or "",
+                time.monotonic() + 600.0,
+            )
+            return
+
+        item = bind_official_user_if_match(
+            db,
+            user_id,
+            current_name,
+            current_username,
+            group_id,
+            group_title,
+        )
+        if item is not None and item.is_from_list == 1:
+            logger.info(
+                "Bound official SA mention group_id=%s telegram_user_id=%s name=%s username=%s",
+                group_id,
+                user_id,
+                item.name,
+                item.username,
+            )
+            if len(_BOUND_PROFILE_CACHE) > 2000:
+                _BOUND_PROFILE_CACHE.clear()
+            _BOUND_PROFILE_CACHE[(group_id, user_id)] = (
+                current_name,
+                current_username or "",
+                time.monotonic() + 600.0,
+            )
+    except Exception:
+        # Mention binding must never interrupt the original message handler.
+        logger.exception(
+            "Could not bind Telegram member activity chat_id=%s user_id=%s",
+            group_id,
+            user_id,
+        )
+    finally:
+        db.close()
+
+
 async def bind_group_member_activity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Bind an official Excel SA row to the sender's real Telegram user ID.
 
@@ -322,62 +400,27 @@ async def bind_group_member_activity(update: Update, context: ContextTypes.DEFAU
     if update.effective_user.is_bot:
         return
 
-    db = SessionLocal()
-    try:
-        # Fast path: once a real Telegram ID is already bound, avoid a database
-        # update/commit for every message in high-volume sales groups.
-        existing = (
-            db.query(SAUser)
-            .filter(
-                SAUser.group_id == update.effective_chat.id,
-                SAUser.telegram_user_id == update.effective_user.id,
-            )
-            .first()
-        )
-        if (
-            existing is not None
-            and existing.is_from_list == 1
-            and existing.region
-            and existing.dealer
-            and existing.position
-        ):
-            # Telegram user ID is stable. Refresh the live profile on every
-            # message so renamed accounts and changed usernames are reflected
-            # automatically in DB and future alert mentions.
-            sync_bound_telegram_profile(
-                db,
-                telegram_user_id=update.effective_user.id,
-                group_id=update.effective_chat.id,
-                current_name=telegram_name(update.effective_user),
-                current_username=update.effective_user.username,
-            )
-            return
+    group_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    current_name = telegram_name(update.effective_user)
+    current_username = update.effective_user.username
+    cached = _BOUND_PROFILE_CACHE.get((group_id, user_id))
+    if (
+        cached is not None
+        and cached[0] == current_name
+        and cached[1] == (current_username or "")
+        and cached[2] > time.monotonic()
+    ):
+        return
 
-        item = bind_official_user_if_match(
-            db,
-            update.effective_user.id,
-            telegram_name(update.effective_user),
-            update.effective_user.username,
-            update.effective_chat.id,
-            chat_name(update.effective_chat),
-        )
-        if item is not None and item.is_from_list == 1:
-            logger.info(
-                "Bound official SA mention group_id=%s telegram_user_id=%s name=%s username=%s",
-                update.effective_chat.id,
-                update.effective_user.id,
-                item.name,
-                item.username,
-            )
-    except Exception:
-        # Mention binding must never interrupt the original message handler.
-        logger.exception(
-            "Could not bind Telegram member activity chat_id=%s user_id=%s",
-            update.effective_chat.id,
-            update.effective_user.id,
-        )
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        _sync_member_activity,
+        user_id,
+        current_name,
+        current_username,
+        group_id,
+        chat_name(update.effective_chat),
+    )
 
 
 async def bind_sa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
