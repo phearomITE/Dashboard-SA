@@ -267,6 +267,7 @@ def add_regular_tracking_jobs(scheduler: AsyncIOScheduler, app: Application) -> 
             replace_existing=True,
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=300,
         )
 
     logger.info(
@@ -293,6 +294,7 @@ def start_scheduler(app: Application) -> AsyncIOScheduler:
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=300,
     )
 
     scheduler.start()
