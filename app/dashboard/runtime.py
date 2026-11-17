@@ -52,6 +52,7 @@ async def start_dashboard(application):
         return
     port = settings.PORT or settings.DASHBOARD_PORT
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((settings.DASHBOARD_HOST, port))
         bot_loop = asyncio.get_running_loop()
