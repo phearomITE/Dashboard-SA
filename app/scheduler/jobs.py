@@ -4,7 +4,7 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
-from telegram.error import RetryAfter
+from telegram.error import NetworkError, RetryAfter
 from telegram.ext import Application
 
 from app.core.config import get_settings
@@ -51,6 +51,20 @@ def get_previous_regular_window(now: datetime, group_name: str | None = None):
     if not window:
         return None
     return window.interval(now)
+
+
+async def _send_with_retry(application: Application, **send_kwargs):
+    for attempt in range(2):
+        try:
+            return await application.bot.send_message(**send_kwargs)
+        except RetryAfter as retry_exc:
+            if attempt == 1:
+                raise
+            await asyncio.sleep(float(retry_exc.retry_after) + 0.5)
+        except NetworkError:
+            if attempt == 1:
+                raise
+            await asyncio.sleep(1.0)
 
 
 async def _send_missing_alert_for_group_window(
@@ -124,7 +138,8 @@ async def _send_missing_alert_for_group_window(
         return 0
 
     try:
-        sent_message = await application.bot.send_message(
+        sent_message = await _send_with_retry(
+            application,
             chat_id=group.group_id,
             text=text,
             parse_mode="HTML",
@@ -170,13 +185,14 @@ async def _send_missing_alert_for_group_window(
             if topic_id is not None:
                 send_kwargs["message_thread_id"] = topic_id
             try:
-                await application.bot.send_message(**send_kwargs)
-            except RetryAfter as retry_exc:
-                await asyncio.sleep(float(retry_exc.retry_after) + 0.5)
-                try:
-                    await application.bot.send_message(**send_kwargs)
-                except Exception:
-                    logger.exception("Controller alert copy retry failed group=%s destination=%s", group.group_id, controller_group_id)
+                await _send_with_retry(application, **send_kwargs)
+            except NetworkError as net_exc:
+                logger.warning(
+                    "Controller alert copy skipped after retry group=%s destination=%s: %s",
+                    group.group_id,
+                    controller_group_id,
+                    net_exc,
+                )
             except Exception:
                 logger.exception("Controller alert copy failed group=%s destination=%s", group.group_id, controller_group_id)
         return len(users)

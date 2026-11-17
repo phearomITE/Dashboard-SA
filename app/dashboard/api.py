@@ -274,7 +274,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
                                                      SAList.is_deleted == 0).first() or
                           db.query(SAUser.id).filter(SAUser.telegram_user_id == telegram_id).first() or
                           db.query(ControllerGroupAssignment.id).filter(ControllerGroupAssignment.user_id == telegram_id).first() or
-                          db.query(RegionalController.id).filter(RegionalController.user_id == telegram_id).first())
+                          db.query(RegionalController.region).filter(RegionalController.user_id == telegram_id).first())
                 if not exists:
                     raise HTTPException(404, "SA member not found.")
                 known_ids.add(telegram_id)
