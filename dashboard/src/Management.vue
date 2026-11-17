@@ -9,8 +9,10 @@ const {s,save,request,refresh,notify}=useWorkspace()
 const query=ref(''), status=ref('All statuses'), region=ref('All regions'), controller=ref('All controllers'), currentPage=ref(1), shift=ref(0)
 const uploadOpen=ref(false),masterFile=ref(null),uploadBusy=ref(false),uploadError=ref('')
 const controllerGroupId=ref(s.data.controller_alert_group_id||'-1004464440125'), controllerAlertsEnabled=ref(s.data.controller_alerts_enabled),settingsBusy=ref(false),settingsError=ref('')
-const breakMinutes=ref(60), breakBusy=ref(false), breakError=ref('')
+const breakBusy=ref(false), breakError=ref('')
 const breakActive=computed(()=>Boolean(s.data.bot_paused_until&&new Date(s.data.bot_paused_until)>new Date(s.data.now||Date.now())))
+const breakMode=ref(breakActive.value?'on':'off'), breakAmount=ref(1), breakUnit=ref('hours')
+watch(breakActive,v=>{breakMode.value=v?'on':'off'})
 const breakUntilLabel=computed(()=>{
   if(!breakActive.value)return ''
   const d=new Date(s.data.bot_paused_until)
@@ -20,6 +22,14 @@ async function applyBotBreak(minutes){
   breakBusy.value=true;breakError.value=''
   try{await save('monitoring/break','PUT',{minutes,reason:'Dashboard Settings'})}
   catch(e){breakError.value=e.message}finally{breakBusy.value=false}
+}
+async function saveBotBreak(){
+  if(breakMode.value==='off'){await applyBotBreak(0);return}
+  const value=Number(breakAmount.value)
+  if(!Number.isFinite(value)||value<=0){breakError.value='Enter a break duration greater than 0.';return}
+  const minutes=Math.round(breakUnit.value==='hours'?value*60:value)
+  if(minutes<1||minutes>10080){breakError.value='Enter a duration between 1 minute and 168 hours.';return}
+  await applyBotBreak(minutes)
 }
 async function saveControllerAlerts(){
   if(!/^-\d+$/.test(controllerGroupId.value)){settingsError.value='Enter a negative Telegram group ID.';return}
@@ -133,17 +143,21 @@ async function submitUploadMaster(){
       <div class="setting-row"><span class="icon-tile teal"><Radio :size="19"/></span><div><strong>Scheduled alerts</strong><small>{{s.data.alerts_enabled?'Scheduled checks can send Telegram alerts.':'Scheduled notifications are paused.'}}</small></div>
         <button class="toggle" role="switch" aria-label="Scheduled alerts" :aria-checked="s.data.alerts_enabled" @click="s.form={type:'monitoring'}"><i/></button></div>
       <div class="setting-row"><span class="icon-tile violet"><Clock3 :size="19"/></span><div><strong>Bot break</strong><small>{{breakActive?`Automatic alerts paused until ${breakUntilLabel}${s.data.bot_pause_reason?' · '+s.data.bot_pause_reason:''}`:'Automatic alerts are active. Check-in photos & pins always stay saved.'}}</small></div>
-        <div class="flex items-center gap-2 ml-auto" style="flex-wrap:wrap">
-          <select v-model.number="breakMinutes" aria-label="Break duration" style="border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px">
-            <option :value="30">30 minutes</option>
-            <option :value="60">1 hour (/break_bot_1h)</option>
-            <option :value="120">2 hours (/break_bot_2h)</option>
-            <option :value="180">3 hours</option>
-            <option :value="240">4 hours</option>
+        <form class="flex items-center gap-2 ml-auto" style="flex-wrap:wrap" @submit.prevent="saveBotBreak">
+          <select v-model="breakMode" aria-label="Bot break option" style="border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px">
+            <option value="off">No break (Active)</option>
+            <option value="on">Break (Pause bot)</option>
           </select>
-          <button type="button" class="primary" :disabled="breakBusy" @click="applyBotBreak(breakMinutes)">{{breakBusy?'Saving…':'Set break'}}</button>
-          <button v-if="breakActive" type="button" class="btn" :disabled="breakBusy" @click="applyBotBreak(0)">Resume now</button>
-        </div>
+          <template v-if="breakMode==='on'">
+            <input v-model.number="breakAmount" type="number" min="0.1" step="any" required aria-label="Break duration value" placeholder="Time" style="width:86px;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px">
+            <select v-model="breakUnit" aria-label="Break duration unit" style="border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px">
+              <option value="minutes">Minute(s)</option>
+              <option value="hours">Hour(s)</option>
+            </select>
+          </template>
+          <button class="primary" :disabled="breakBusy">{{breakBusy?'Saving…':breakMode==='on'?'Set break':(breakActive?'Resume bot':'Save')}}</button>
+          <button v-if="breakActive&&breakMode==='on'" type="button" class="btn" :disabled="breakBusy" @click="applyBotBreak(0)">Resume now</button>
+        </form>
       </div>
       <p v-if="breakError" class="error-text" role="alert">{{breakError}}</p>
       <div class="setting-row"><span class="icon-tile violet"><Clock3 :size="19"/></span><div><strong>Bot timezone</strong><small>{{s.data.timezone}}</small></div></div>

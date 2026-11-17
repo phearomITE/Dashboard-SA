@@ -50,7 +50,7 @@ class ControllerAlerts(Input):
 
 
 class BotBreak(Input):
-    minutes: int = Field(ge=0, le=1440)
+    minutes: int = Field(ge=0, le=10080)
     reason: str = Field(default="Dashboard Settings", max_length=100)
 
 
@@ -605,7 +605,13 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
         prefs.bot_paused_until = until
         prefs.bot_pause_reason = body.reason or "Dashboard Settings"
         db.add(prefs)
-        label = "1 hour" if body.minutes == 60 else "2 hours" if body.minutes == 120 else f"{body.minutes} min"
+        hrs, mins = divmod(body.minutes, 60)
+        if hrs and mins:
+            label = f"{hrs}h {mins}m"
+        elif hrs:
+            label = "1 hour" if hrs == 1 else f"{hrs} hours"
+        else:
+            label = "1 minute" if mins == 1 else f"{mins} minutes"
         return {
             "bot_paused_until": until,
             "message": f"Bot automatic alerts paused for {label} (until {until:%H:%M}).",
