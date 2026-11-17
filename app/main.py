@@ -336,7 +336,7 @@ def main() -> None:
                 migrate_legacy_roster_positions(db)
                 db.merge(AppliedMaster(version="schema-2026-11-16"))
                 db.commit()
-            elif SA_MEMBERS:
+            elif SA_MEMBERS and not db.query(SAList.id).first():
                 seed_sa_list(db)
             load_controller_overrides(db)
             active_rows = db.query(SAList.group_name).filter(SAList.is_deleted == 0, SAList.is_active == 1).all()

@@ -208,6 +208,8 @@ def seed_sa_list(db: Session) -> int:
     roster_source = db.info.get("official_roster", MASTER_ASSIGNMENTS)
     if not roster_source and "official_roster" not in db.info:
         return 0
+    if "official_roster" not in db.info and official_rows:
+        return 0
     for member in roster_source:
         member_user_id = int(member.get("telegram_user_id") or 0)
         key = (normalize_group(member.get("group_name")), normalize_name(member.get("name")))
@@ -271,7 +273,7 @@ def seed_sa_list(db: Session) -> int:
         changed = True
 
     for row in official_rows:
-        if row.id not in retained_ids:
+        if row.id not in retained_ids and not row.dashboard_override and not row.is_deleted:
             db.delete(row)
             changed = True
 
