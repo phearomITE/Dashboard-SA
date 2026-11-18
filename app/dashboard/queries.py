@@ -11,6 +11,7 @@ from app.database.models import (
     PinHistory, Product, SAList, SAUser, SalePhotoReport, TelegramGroup,
 )
 from app.services.shift_config import ALL_FLOWS, break_alert_for_shift
+from app.services.telethon_recovery import telethon_is_configured
 from app.services.time_service import local_now
 from app.services.user_service import normalize_name
 from app.services.outlet_form import report_details, report_quantities
@@ -64,6 +65,7 @@ def snapshot(db, online, preview):
                 bot_pause_reason=bot_pause_reason,
                 controller_alerts_enabled=prefs is None or prefs.controller_alerts_enabled,
                 controller_alert_group_id=str(prefs.controller_alert_group_id if prefs and prefs.controller_alert_group_id else -1004464440125),
+                telethon_configured=telethon_is_configured(),
                 roster=roster, controllers=controllers,
                 groups=[dict(id=str(g.group_id), name=g.group_name or str(g.group_id), region=region_from_group(g.group_name),
                              enabled=bool(g.is_active), members=counts[str(g.group_id)]) for g in groups],

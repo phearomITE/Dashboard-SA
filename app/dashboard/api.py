@@ -111,6 +111,13 @@ class MissReportEdit(Input):
     reason: str = Field(default="", max_length=2000)
 
 
+class RecoveryRun(Input):
+    day: date
+    from_time: str = Field(default="00:00", pattern=r"^\d{2}:\d{2}$")
+    to_time: str = Field(default="23:59", pattern=r"^\d{2}:\d{2}$")
+    group: str = Field(default="", max_length=120)
+
+
 def required(db, model, identity):
     item = db.get(model, identity, with_for_update=True)
     if not item:
@@ -628,6 +635,53 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
         prefs.controller_alert_group_id = body.group_id
         db.add(prefs)
         return {"ok": True}
+
+    @app.post("/api/recovery/run")
+    async def run_recovery(body: RecoveryRun, db=Depends(write)):
+        from app.core.config import get_settings
+        from app.services.telethon_recovery import sync_history_with_telethon, telethon_is_configured
+
+        if preview:
+            return {"message": "History recovery is disabled in preview mode."}
+        cfg = get_settings()
+        if not telethon_is_configured():
+            raise HTTPException(
+                409,
+                "Set TELETHON_API_ID, TELETHON_API_HASH, and TELETHON_STRING_SESSION on the server first.",
+            )
+        start_t = datetime.strptime(body.from_time, "%H:%M").time()
+        end_t = datetime.strptime(body.to_time, "%H:%M").time().replace(second=59)
+        if end_t < start_t:
+            raise HTTPException(422, "End time must not be earlier than start time.")
+        try:
+            summary = await sync_history_with_telethon(
+                api_id=int(cfg.TELETHON_API_ID),
+                api_hash=cfg.TELETHON_API_HASH.strip(),
+                target_date=body.day,
+                start_time=start_t,
+                end_time=end_t,
+                session_path=cfg.TELETHON_SESSION_FILE,
+                string_session=cfg.TELETHON_STRING_SESSION.strip() or None,
+                group_filter=body.group.strip() or None,
+                dry_run=False,
+                reconcile_missing=True,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {
+            "ok": True,
+            "groups_synced": summary.groups_synced,
+            "groups_total": summary.groups_total,
+            "recovered_pins": summary.recovered_pins,
+            "recovered_reports": summary.recovered_reports,
+            "repaired_timestamps": summary.repaired_timestamps,
+            "cleared_alerts": summary.reconciled_missing_alerts,
+            "message": (
+                f"Recovered +{summary.recovered_pins} pins, +{summary.recovered_reports} reports, "
+                f"repaired {summary.repaired_timestamps} timestamps, cleared {summary.reconciled_missing_alerts} "
+                f"false alerts across {summary.groups_synced}/{summary.groups_total} groups."
+            ),
+        }
 
     @app.post("/api/groups/register/{gid}")
     async def register(gid: int, db=Depends(write)):

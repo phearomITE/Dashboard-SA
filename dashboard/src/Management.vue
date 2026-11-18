@@ -37,6 +37,12 @@ async function saveControllerAlerts(){
   try{await save('monitoring/controller-alerts','PUT',{enabled:controllerAlertsEnabled.value,group_id:Number(controllerGroupId.value)},'Controller alert settings saved.')}
   catch(e){settingsError.value=e.message}finally{settingsBusy.value=false}
 }
+const recDay=ref((s.data.now||'').slice(0,10)),recFrom=ref('06:00'),recTo=ref('23:59'),recGroup=ref(''),recBusy=ref(false),recError=ref('')
+async function runTelethonRecovery(){
+  recBusy.value=true;recError.value=''
+  try{await save('recovery/run','POST',{day:recDay.value,from_time:recFrom.value,to_time:recTo.value,group:recGroup.value})}
+  catch(e){recError.value=e.message}finally{recBusy.value=false}
+}
 const lists={roster:'roster',groups:'groups',products:'products',controllers:'controllers'}
 const icons={roster:Users,groups:Layers3,products:Boxes,controllers:ShieldCheck}
 const labels={roster:'members',groups:'groups',products:'products',controllers:'assignments'}
@@ -173,6 +179,17 @@ async function submitUploadMaster(){
         <label class="controller-alert-check"><input type="checkbox" v-model="controllerAlertsEnabled">Send controller copies</label>
         <button class="primary" :disabled="settingsBusy">{{settingsBusy?'Saving…':'Save controller alerts'}}</button></form>
       <p v-if="settingsError" class="error-text" role="alert">{{settingsError}}</p><p class="form-hint">The bot must be a member of the destination group. Delivery errors are logged; alerts to SA groups continue.</p>
+    </section>
+    <section class="panel padded settings-panel"><div class="panel-head"><div><h2>History recovery (Telethon)</h2><p>Backfill missed pins and reports from Telegram group history across all 65 groups.</p></div><Download class="quiet"/></div>
+      <form class="flex items-end gap-2" style="flex-wrap:wrap" @submit.prevent="runTelethonRecovery">
+        <label>Date<input v-model="recDay" type="date" required></label>
+        <label>From<input v-model="recFrom" type="time" required></label>
+        <label>To<input v-model="recTo" type="time" required></label>
+        <label>Group filter <small>(optional)</small><input v-model.trim="recGroup" placeholder="All 65 groups" maxlength="120"></label>
+        <button class="primary" :disabled="recBusy||!s.data.telethon_configured"><Download :size="15"/>{{recBusy?'Recovering…':'Recover missed data'}}</button>
+      </form>
+      <p v-if="recError" class="error-text" role="alert">{{recError}}</p>
+      <p class="form-hint">{{s.data.telethon_configured?'Telethon session is configured and ready.':'Configure TELETHON_API_ID, TELETHON_API_HASH, and TELETHON_STRING_SESSION on the server to enable web recovery.'}}</p>
     </section>
     <section class="panel padded settings-panel"><div class="panel-head"><div><h2>Workspace access</h2><p>{{s.preview?'This preview uses fictional data and an isolated database.':s.authRequired?'Management administrators sign in with a private, one-time Telegram code.':'This local dashboard opens directly without a sign-in code.'}}</p></div><ShieldCheck class="quiet"/></div>
       <div class="setting-row"><span class="icon-tile blue"><Database :size="19"/></span><div><strong>{{s.preview?'Preview database':'Operations database'}}</strong><small>{{s.preview?'Changes last for this preview session.':'Roster, product, and alert changes are saved in PostgreSQL.'}}</small></div></div>

@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     TELETHON_API_HASH: str = ""
     TELETHON_STRING_SESSION: str = ""
     TELETHON_SESSION_FILE: str = "backups/telethon_recovery.session"
+    TELETHON_AUTO_RECOVER_ON_STARTUP: bool = True
 
     # Ignore legacy .env keys from earlier releases and accept UTF-8 files
     # safely after Windows PowerShell rewrites them.

@@ -1,7 +1,11 @@
 # app/main.py
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -304,6 +308,21 @@ def start_scheduler(app: Application) -> AsyncIOScheduler:
         coalesce=True,
         misfire_grace_time=300,
     )
+
+    from app.services.telethon_recovery import recover_today_if_configured, telethon_is_configured
+    if settings.TELETHON_AUTO_RECOVER_ON_STARTUP and telethon_is_configured():
+        scheduler.add_job(
+            recover_today_if_configured,
+            trigger=DateTrigger(
+                run_date=datetime.now(ZoneInfo(settings.APP_TIMEZONE)) + timedelta(seconds=15),
+                timezone=settings.APP_TIMEZONE,
+            ),
+            id="telethon_startup_recovery",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
 
     scheduler.start()
     return scheduler

@@ -2,14 +2,14 @@
 """Recover missed Telegram group pins/reports into PostgreSQL via Telethon Client API.
 
 Usage examples:
-  1) Login once and save local session:
-     python scripts/recover_telegram_history.py --login --api-id 123456 --api-hash abcdef...
+  1) Login once and save local session + print TELETHON_STRING_SESSION for Render:
+     python scripts/recover_telegram_history.py --login
 
   2) Dry-run preview across all 65 groups for today:
-     python scripts/recover_telegram_history.py --date 2026-11-18
+     python scripts/recover_telegram_history.py --date 2026-11-18 --database-url "postgresql://..."
 
   3) Apply recovery + reconcile false missing alerts:
-     python scripts/recover_telegram_history.py --date 2026-11-18 --apply
+     python scripts/recover_telegram_history.py --date 2026-11-18 --from 06:00 --to 10:15 --apply --database-url "postgresql://..."
 """
 
 from __future__ import annotations
@@ -29,16 +29,18 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env", override=False)
 
-from app.core.config import get_settings
-from app.services.telethon_recovery import sync_history_with_telethon
-from app.services.time_service import local_now
-
 
 def _parse_time(raw: str) -> time:
     return datetime.strptime(raw.strip(), "%H:%M").time()
 
 
-async def _login_interactive(api_id: int, api_hash: str, session_path: str, print_string_session: bool) -> None:
+async def _login_interactive(
+    api_id: int,
+    api_hash: str,
+    session_path: str,
+    *,
+    save_session_env: bool = False,
+) -> None:
     from telethon import TelegramClient
     from telethon.sessions import StringSession
 
@@ -47,30 +49,54 @@ async def _login_interactive(api_id: int, api_hash: str, session_path: str, prin
     client = TelegramClient(str(resolved), api_id, api_hash)
     await client.start()
     me = await client.get_me()
+    str_session = StringSession.save(client.session)
     print(
         f"LOGIN OK: {getattr(me, 'first_name', '')} (@{getattr(me, 'username', None)}) "
         f"session saved to {resolved}"
     )
-    if print_string_session:
-        str_client = StringSession.save(client.session)
-        print("TELETHON_STRING_SESSION (keep secret!):")
-        print(str_client)
+    print("TELETHON_STRING_SESSION (keep secret! Add to Render Environment for automatic recovery):")
+    print(str_session)
+    if save_session_env:
+        env_path = ROOT / ".env"
+        lines = env_path.read_text(encoding="utf-8-sig").splitlines() if env_path.exists() else []
+        updated = []
+        replaced = False
+        for line in lines:
+            if line.strip().startswith("TELETHON_STRING_SESSION="):
+                updated.append(f"TELETHON_STRING_SESSION={str_session}")
+                replaced = True
+            else:
+                updated.append(line)
+        if not replaced:
+            updated.append(f"TELETHON_STRING_SESSION={str_session}")
+        env_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+        print(f"Saved TELETHON_STRING_SESSION to {env_path}")
     await client.disconnect()
 
 
 def main() -> None:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--database-url", default="")
+    pre_args, _ = pre_parser.parse_known_args()
+    if pre_args.database_url.strip():
+        os.environ["DATABASE_URL"] = pre_args.database_url.strip()
+
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
     settings = get_settings()
 
     parser = argparse.ArgumentParser(
         description="Backfill missed SA pins/reports from Telegram group history via Telethon."
     )
+    parser.add_argument("--database-url", default=os.getenv("DATABASE_URL", ""), help="Override DATABASE_URL (e.g. Neon PostgreSQL URL).")
     parser.add_argument("--api-id", type=int, default=settings.TELETHON_API_ID or int(os.getenv("TELETHON_API_ID") or 0))
     parser.add_argument("--api-hash", default=settings.TELETHON_API_HASH or os.getenv("TELETHON_API_HASH", ""))
     parser.add_argument("--session", default=settings.TELETHON_SESSION_FILE)
     parser.add_argument("--string-session", default=settings.TELETHON_STRING_SESSION)
     parser.add_argument("--login", action="store_true", help="Authenticate Telethon user account once and exit.")
-    parser.add_argument("--print-string-session", action="store_true", help="Also output StringSession during --login.")
-    parser.add_argument("--date", dest="target_date", default=local_now().strftime("%Y-%m-%d"), help="Target local date YYYY-MM-DD.")
+    parser.add_argument("--save-session-env", action="store_true", help="Save TELETHON_STRING_SESSION into .env during --login.")
+    parser.add_argument("--date", dest="target_date", default=None, help="Target local date YYYY-MM-DD (default: today).")
     parser.add_argument("--from", dest="from_time", default="00:00", help="Start local time HH:MM.")
     parser.add_argument("--to", dest="to_time", default="23:59", help="End local time HH:MM.")
     parser.add_argument("--group", default=None, help="Optional group name substring filter (e.g. BTB1).")
@@ -85,10 +111,20 @@ def main() -> None:
         )
 
     if args.login:
-        asyncio.run(_login_interactive(args.api_id, args.api_hash.strip(), args.session, args.print_string_session))
+        asyncio.run(
+            _login_interactive(
+                args.api_id,
+                args.api_hash.strip(),
+                args.session,
+                save_session_env=args.save_session_env,
+            )
+        )
         return
 
-    target_date = date.fromisoformat(args.target_date)
+    from app.services.telethon_recovery import sync_history_with_telethon
+    from app.services.time_service import local_now
+
+    target_date = date.fromisoformat(args.target_date) if args.target_date else local_now().date()
     start_t = _parse_time(args.from_time)
     end_t = _parse_time(args.to_time).replace(second=59)
     dry_run = not args.apply
