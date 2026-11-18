@@ -300,12 +300,13 @@ def _prepare_scheduled_alerts_sync(run_hour: int, run_minute: int, now: datetime
             )
             .all()
         )
+        pin_stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
         all_pins = (
             db.query(PinHistory)
             .filter(
                 PinHistory.group_id.in_(active_group_ids),
-                PinHistory.pinned_at >= min_grace_start,
-                PinHistory.pinned_at <= max_grace_end,
+                pin_stamp >= min_grace_start,
+                pin_stamp <= max_grace_end,
             )
             .all()
         )
@@ -343,7 +344,7 @@ def _prepare_scheduled_alerts_sync(run_hour: int, run_minute: int, now: datetime
                 g_start = interval_start_with_grace(start)
                 g_end = interval_end_with_grace(end)
                 w_reports = [r for r in g_reports if g_start <= r.submitted_at <= g_end]
-                w_pins = [p for p in g_pins if g_start <= p.pinned_at <= g_end]
+                w_pins = [p for p in g_pins if g_start <= (p.event_at or p.pinned_at) <= g_end]
                 submitted_ids = _resolve_submitted_user_ids(eligible, w_reports, w_pins)
                 missing = [u for u in eligible if u.id not in submitted_ids]
                 if not missing:

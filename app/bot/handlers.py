@@ -1466,6 +1466,101 @@ async def pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
+def _persist_location(
+    *,
+    user_id: int,
+    group_id: int,
+    group_name: str,
+    full_name: str,
+    username: str | None,
+    latitude: float,
+    longitude: float,
+    event_at,
+    telegram_update_id: int | None,
+    linked_caption: str | None,
+    replied_has_photo: bool,
+    same_sender: bool,
+    replied_sender_id: int | None,
+    replied_message_id: int | None,
+    replied_media_group_id: str | None,
+    gps_message_id: int,
+) -> None:
+    """Persist one location pin (and optional linked photo/form reply) off the asyncio loop."""
+    db = SessionLocal()
+    try:
+        save_location(
+            db,
+            user_id,
+            group_id,
+            group_name,
+            full_name,
+            username,
+            latitude,
+            longitude,
+            event_at=event_at,
+            telegram_update_id=telegram_update_id,
+            report_caption=linked_caption if has_sale_format_text(linked_caption or "") else None,
+        )
+
+        # Way 2:
+        # User sends photo + caption first, then replies to that photo with map/location.
+        if replied_has_photo and same_sender and replied_message_id is not None:
+            # Store one atomic proof that the same Telegram account supplied
+            # both the photo and its replied GPS.  The interval matcher accepts
+            # this linked report even if historic duplicate cleanup left the
+            # separate PinHistory row on an older canonical SA row.
+            save_sale_photo_report(
+                db,
+                user_id,
+                group_id,
+                group_name,
+                full_name,
+                username,
+                linked_caption or "",
+                latitude,
+                longitude,
+                replied_message_id,
+                gps_message_id,
+                media_group_id=replied_media_group_id,
+                event_at=event_at,
+            )
+            if replied_media_group_id:
+                _remember_media_group(group_id, user_id, replied_media_group_id)
+        elif replied_has_photo and not same_sender:
+            logger.warning(
+                "GPS reply not linked to another sender's photo chat_id=%s gps_user_id=%s photo_user_id=%s",
+                group_id,
+                user_id,
+                replied_sender_id,
+            )
+        elif (
+            replied_message_id is not None
+            and same_sender
+            and has_sale_format_text(linked_caption or "")
+        ):
+            # Exact field workflow: an SA replies to their own outlet/order
+            # text form with a Telegram location. Persist one atomic row with
+            # the GPS coordinates even when the original/edited form update
+            # was missed during a restart. This prevents the visible
+            # form+location pair from being falsely mentioned as missing.
+            save_sale_photo_report(
+                db,
+                user_id,
+                group_id,
+                group_name,
+                full_name,
+                username,
+                linked_caption or "",
+                latitude,
+                longitude,
+                replied_message_id,
+                gps_message_id,
+                event_at=event_at,
+            )
+    finally:
+        db.close()
+
+
 async def receive_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     if (
@@ -1485,79 +1580,30 @@ async def receive_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     loc = msg.location
     group_id = update.effective_chat.id
     group_name = chat_name(update.effective_chat)
+    replied = msg.reply_to_message
+    replied_sender = getattr(replied, "from_user", None) if replied else None
+    same_sender = bool(replied_sender and int(replied_sender.id) == int(user.id))
+    linked_caption = get_caption(replied) if replied and same_sender else None
 
-    db = SessionLocal()
-    try:
-        replied = msg.reply_to_message
-        author = getattr(replied, "from_user", None)
-        linked_caption = get_caption(replied) if author and author.id == user.id else None
-        save_location(
-            db,
-            user.id,
-            group_id,
-            group_name,
-            telegram_name(user),
-            user.username,
-            loc.latitude,
-            loc.longitude,
-            event_at=getattr(msg, "edit_date", None) or getattr(msg, "date", None),
-            telegram_update_id=getattr(update, "update_id", None),
-            report_caption=linked_caption if has_sale_format_text(linked_caption or "") else None,
-        )
-
-        # Way 2:
-        # User sends photo + caption first, then replies to that photo with map/location.
-        replied_photo = msg.reply_to_message
-        replied_sender = getattr(replied_photo, "from_user", None) if replied_photo else None
-        same_sender = bool(replied_sender and int(replied_sender.id) == int(user.id))
-        if replied_photo and has_photo(replied_photo) and same_sender:
-            # Store one atomic proof that the same Telegram account supplied
-            # both the photo and its replied GPS.  The interval matcher accepts
-            # this linked report even if historic duplicate cleanup left the
-            # separate PinHistory row on an older canonical SA row.
-            caption = get_caption(msg.reply_to_message)
-            save_sale_photo_report(
-                db,
-                user.id,
-                group_id,
-                group_name,
-                telegram_name(user),
-                user.username,
-                caption,
-                loc.latitude,
-                loc.longitude,
-                msg.reply_to_message.message_id,
-                msg.message_id,
-                media_group_id=getattr(replied_photo, "media_group_id", None),
-            )
-        elif replied_photo and has_photo(replied_photo) and not same_sender:
-            logger.warning(
-                "GPS reply not linked to another sender's photo chat_id=%s gps_user_id=%s photo_user_id=%s",
-                group_id,
-                user.id,
-                getattr(replied_sender, "id", None),
-            )
-        elif replied_photo and same_sender and has_sale_format_text(get_caption(replied_photo)):
-            # Exact field workflow: an SA replies to their own outlet/order
-            # text form with a Telegram location. Persist one atomic row with
-            # the GPS coordinates even when the original/edited form update
-            # was missed during a restart. This prevents the visible
-            # form+location pair from being falsely mentioned as missing.
-            save_sale_photo_report(
-                db,
-                user.id,
-                group_id,
-                group_name,
-                telegram_name(user),
-                user.username,
-                get_caption(replied_photo),
-                loc.latitude,
-                loc.longitude,
-                replied_photo.message_id,
-                msg.message_id,
-            )
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        _persist_location,
+        user_id=user.id,
+        group_id=group_id,
+        group_name=group_name,
+        full_name=telegram_name(user),
+        username=user.username,
+        latitude=loc.latitude,
+        longitude=loc.longitude,
+        event_at=getattr(msg, "edit_date", None) or getattr(msg, "date", None),
+        telegram_update_id=getattr(update, "update_id", None),
+        linked_caption=linked_caption,
+        replied_has_photo=bool(replied and has_photo(replied)),
+        same_sender=same_sender,
+        replied_sender_id=getattr(replied_sender, "id", None),
+        replied_message_id=replied.message_id if replied else None,
+        replied_media_group_id=getattr(replied, "media_group_id", None) if replied else None,
+        gps_message_id=msg.message_id,
+    )
 
 
 def _telegram_audio_suffix(audio, telegram_file) -> str:
@@ -1717,6 +1763,47 @@ async def _transcribe_voice_message(context: ContextTypes.DEFAULT_TYPE, voice) -
         return None
 
 
+def _persist_reason_reply(
+    *,
+    replied_to_bot: bool,
+    group_id: int,
+    alert_message_id: int | None,
+    sender_user_id: int,
+    sender_username: str | None,
+    sender_name: str,
+    reason_text: str,
+    reason_message_id: int,
+    submitted_at: datetime,
+) -> int:
+    """Persist text/caption missing reason off the asyncio loop."""
+    db = SessionLocal()
+    try:
+        if replied_to_bot and alert_message_id is not None:
+            return save_missing_reason_reply(
+                db,
+                group_id=group_id,
+                alert_message_id=alert_message_id,
+                sender_user_id=sender_user_id,
+                sender_username=sender_username,
+                sender_name=sender_name,
+                reason_text=reason_text,
+                voice_to_text=None,
+                reason_message_id=reason_message_id,
+                submitted_at=submitted_at,
+            )
+        return save_latest_missing_reason(
+            db,
+            group_id=group_id,
+            sender_user_id=sender_user_id,
+            reason_text=reason_text,
+            voice_to_text=None,
+            reason_message_id=reason_message_id,
+            submitted_at=submitted_at,
+        )
+    finally:
+        db.close()
+
+
 async def receive_missing_reason_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1872,33 +1959,18 @@ async def receive_missing_reason_reply(
             finally:
                 db.close()
     else:
-        db = SessionLocal()
-        try:
-            if replied_to_bot:
-                updated = save_missing_reason_reply(
-                    db,
-                    group_id=update.effective_chat.id,
-                    alert_message_id=replied.message_id,
-                    sender_user_id=update.effective_user.id,
-                    sender_username=update.effective_user.username,
-                    sender_name=telegram_name(update.effective_user),
-                    reason_text=reason_text,
-                    voice_to_text=None,
-                    reason_message_id=message.message_id,
-                    submitted_at=local_now(),
-                )
-            else:
-                updated = save_latest_missing_reason(
-                    db,
-                    group_id=update.effective_chat.id,
-                    sender_user_id=update.effective_user.id,
-                    reason_text=reason_text,
-                    voice_to_text=None,
-                    reason_message_id=message.message_id,
-                    submitted_at=local_now(),
-                )
-        finally:
-            db.close()
+        updated = await asyncio.to_thread(
+            _persist_reason_reply,
+            replied_to_bot=replied_to_bot,
+            group_id=update.effective_chat.id,
+            alert_message_id=replied.message_id if replied_to_bot else None,
+            sender_user_id=update.effective_user.id,
+            sender_username=update.effective_user.username,
+            sender_name=telegram_name(update.effective_user),
+            reason_text=reason_text,
+            reason_message_id=message.message_id,
+            submitted_at=local_now(),
+        )
 
     if updated:
         logger.info(
@@ -2047,6 +2119,92 @@ async def retry_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+_SEEN_MEDIA_GROUPS: dict[tuple[int, int, str], float] = {}
+_MEDIA_GROUP_CACHE_TTL_SECONDS = 120.0
+
+
+def _remember_media_group(group_id: int, user_id: int, media_group_id: str) -> None:
+    """Cache recently saved album IDs so extra captionless photos skip redundant DB writes."""
+    if len(_SEEN_MEDIA_GROUPS) > 2048:
+        _SEEN_MEDIA_GROUPS.clear()
+    _SEEN_MEDIA_GROUPS[(int(group_id), int(user_id), str(media_group_id))] = (
+        time.monotonic() + _MEDIA_GROUP_CACHE_TTL_SECONDS
+    )
+
+
+def _persist_sale_text(
+    *,
+    user_id: int,
+    group_id: int,
+    group_name: str,
+    full_name: str,
+    username: str | None,
+    text: str,
+    message_id: int,
+    event_at,
+) -> None:
+    """Persist one sale form text message off the asyncio event loop."""
+    db = SessionLocal()
+    try:
+        save_text_form_report(
+            db,
+            user_id,
+            group_id,
+            group_name,
+            full_name,
+            username,
+            text,
+            message_id,
+            event_at=event_at,
+        )
+    finally:
+        db.close()
+
+
+def _persist_sale_photo(
+    *,
+    user_id: int,
+    group_id: int,
+    group_name: str,
+    full_name: str,
+    username: str | None,
+    caption: str,
+    reply_lat: float | None,
+    reply_lon: float | None,
+    message_id: int,
+    replied_message_id: int | None,
+    media_group_id: str | None,
+    event_at,
+) -> None:
+    """Persist one sale photo report off the asyncio loop, deduplicating extra album frames."""
+    if media_group_id and not caption.strip() and reply_lat is None:
+        exp = _SEEN_MEDIA_GROUPS.get((int(group_id), int(user_id), str(media_group_id)), 0.0)
+        if exp > time.monotonic():
+            return
+
+    db = SessionLocal()
+    try:
+        save_sale_photo_report(
+            db,
+            user_id,
+            group_id,
+            group_name,
+            full_name,
+            username,
+            caption,
+            reply_lat,
+            reply_lon,
+            message_id,
+            replied_message_id,
+            media_group_id=media_group_id,
+            event_at=event_at,
+        )
+        if media_group_id:
+            _remember_media_group(group_id, user_id, media_group_id)
+    finally:
+        db.close()
+
+
 async def receive_sale_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Save standard text outlet/order forms.
 
@@ -2068,20 +2226,17 @@ async def receive_sale_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     group_id = update.effective_chat.id
     group_name = chat_name(update.effective_chat)
 
-    db = SessionLocal()
-    try:
-        save_text_form_report(
-            db,
-            user.id,
-            group_id,
-            group_name,
-            telegram_name(user),
-            user.username,
-            text,
-            msg.message_id,
-        )
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        _persist_sale_text,
+        user_id=user.id,
+        group_id=group_id,
+        group_name=group_name,
+        full_name=telegram_name(user),
+        username=user.username,
+        text=text,
+        message_id=msg.message_id,
+        event_at=getattr(msg, "edit_date", None) or getattr(msg, "date", None),
+    )
 
 
 async def receive_sale_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2124,24 +2279,21 @@ async def receive_sale_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 getattr(replied_sender, "id", None),
             )
 
-    db = SessionLocal()
-    try:
-        save_sale_photo_report(
-            db,
-            user.id,
-            group_id,
-            group_name,
-            telegram_name(user),
-            user.username,
-            caption,
-            reply_lat,
-            reply_lon,
-            msg.message_id,
-            replied_message_id,
-            media_group_id=getattr(msg, "media_group_id", None),
-        )
-    finally:
-        db.close()
+    await asyncio.to_thread(
+        _persist_sale_photo,
+        user_id=user.id,
+        group_id=group_id,
+        group_name=group_name,
+        full_name=telegram_name(user),
+        username=user.username,
+        caption=caption,
+        reply_lat=reply_lat,
+        reply_lon=reply_lon,
+        message_id=msg.message_id,
+        replied_message_id=replied_message_id,
+        media_group_id=getattr(msg, "media_group_id", None),
+        event_at=getattr(msg, "edit_date", None) or getattr(msg, "date", None),
+    )
 
 
 async def delete_pin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

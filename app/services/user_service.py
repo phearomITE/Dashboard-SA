@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time as _time
 import unicodedata
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -910,6 +911,23 @@ def bind_official_user_if_match(
     )
 
 
+_GROUP_SEEN_CACHE: dict[int, tuple[str | None, float]] = {}
+
+
+def _ensure_group_registered_fast(db: Session, group_id: int, group_name: str | None) -> None:
+    if db.get_bind().dialect.name == "postgresql":
+        cached = _GROUP_SEEN_CACHE.get(group_id)
+        now_mono = _time.monotonic()
+        if cached is not None and cached[0] == group_name and cached[1] > now_mono:
+            return
+        register_group(db, group_id, group_name, sync_members=False)
+        if len(_GROUP_SEEN_CACHE) > 500:
+            _GROUP_SEEN_CACHE.clear()
+        _GROUP_SEEN_CACHE[group_id] = (group_name, now_mono + 300.0)
+    else:
+        register_group(db, group_id, group_name, sync_members=False)
+
+
 def register_or_update_user(
     db: Session,
     telegram_user_id: int,
@@ -933,13 +951,23 @@ def register_or_update_user(
             updated_at=now,
         )
 
-    # Normal field submissions must not trigger a full roster resync.
-    # Re-syncing the group between a form and pin can merge rows mid-window and
-    # was a source of intermittent false mentions under real traffic.
-    register_group(db, group_id, group_name, sync_members=False)
+    _ensure_group_registered_fast(db, group_id, group_name)
     item = _find_existing_user(db, telegram_user_id, username, group_id)
-    now = local_now()
     username_norm = normalize_username(username)
+    if (
+        item is not None
+        and item.is_from_list == 1
+        and item.region
+        and item.dealer
+        and item.position
+        and int(item.telegram_user_id or 0) == int(telegram_user_id)
+        and item.group_name == group_name
+        and item.name == name
+        and item.username == username_norm
+    ):
+        return item
+
+    now = local_now()
     official_member = _official_member_for_user(db, group_name, telegram_user_id, name, username)
     if official_member is not None and _member_is_excluded(official_member, _exclusion_rows(db, group_id)):
         official_member = None
@@ -1464,6 +1492,15 @@ def restore_user_to_alerts(
     return len(matches), len(get_all_users_by_group(db, group_id))
 
 
+def _to_local_naive(dt: datetime | None) -> datetime | None:
+    """Convert an aware Telegram timestamp to a naive local datetime matching DB columns."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(ZoneInfo(settings.APP_TIMEZONE)).replace(tzinfo=None)
+    return dt
+
+
 def save_location(
     db: Session,
     telegram_user_id: int,
@@ -1483,11 +1520,10 @@ def save_location(
     now = local_now()
     if telegram_update_id is not None and db.query(PinHistory.id).filter_by(telegram_update_id=telegram_update_id).first():
         return item
-    if event_at and event_at.tzinfo:
-        event_at = event_at.astimezone(ZoneInfo(settings.APP_TIMEZONE)).replace(tzinfo=None)
+    effective_time = _to_local_naive(event_at) or now
     map_link = create_maps_link(lat, lon)
-    window_start = get_current_interval_start(now, settings.ALERT_INTERVAL_MINUTES)
-    window_end = get_current_interval_end(now, settings.ALERT_INTERVAL_MINUTES)
+    window_start = get_current_interval_start(effective_time, settings.ALERT_INTERVAL_MINUTES)
+    window_end = get_current_interval_end(effective_time, settings.ALERT_INTERVAL_MINUTES)
 
     item.lat = lat
     item.lon = lon
@@ -1512,7 +1548,7 @@ def save_location(
         pinned_at=now,
         window_start=window_start,
         window_end=window_end,
-        event_at=event_at or now,
+        event_at=effective_time,
         telegram_update_id=telegram_update_id,
     )
     db.add(pin)
@@ -1535,12 +1571,15 @@ def save_sale_photo_report(
     telegram_message_id: int | None,
     replied_message_id: int | None,
     media_group_id: str | None = None,
+    *,
+    event_at: datetime | None = None,
 ) -> SalePhotoReport:
     item = register_or_update_user(db, telegram_user_id, name, username, group_id, group_name)
 
     now = local_now()
-    window_start = get_current_interval_start(now, settings.ALERT_INTERVAL_MINUTES)
-    window_end = get_current_interval_end(now, settings.ALERT_INTERVAL_MINUTES)
+    submit_time = _to_local_naive(event_at) or now
+    window_start = get_current_interval_start(submit_time, settings.ALERT_INTERVAL_MINUTES)
+    window_end = get_current_interval_end(submit_time, settings.ALERT_INTERVAL_MINUTES)
 
     # A GPS reply supplies the coordinates for the original outlet message.
     # Keep its original submission time when enriching it or receiving an edit.
@@ -1576,7 +1615,7 @@ def save_sale_photo_report(
         reply_map_link=create_maps_link(reply_lat, reply_lon),
         telegram_message_id=telegram_message_id,
         replied_message_id=replied_message_id,
-        submitted_at=now,
+        submitted_at=submit_time,
         window_start=window_start,
         window_end=window_end,
     )
@@ -1596,6 +1635,8 @@ def save_text_form_report(
     username: str | None,
     text: str,
     telegram_message_id: int | None,
+    *,
+    event_at: datetime | None = None,
 ) -> SalePhotoReport | None:
     """Save text outlet/order form.
 
@@ -1617,6 +1658,7 @@ def save_text_form_report(
         reply_lon=None,
         telegram_message_id=telegram_message_id,
         replied_message_id=None,
+        event_at=event_at,
     )
 
 
@@ -1864,12 +1906,13 @@ def _submitted_user_ids_for_interval(
         )
         .all()
     )
+    pin_stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
     pins = (
         db.query(PinHistory)
         .filter(
             PinHistory.group_id == group_id,
-            PinHistory.pinned_at >= grace_start,
-            PinHistory.pinned_at <= grace_end,
+            pin_stamp >= grace_start,
+            pin_stamp <= grace_end,
         )
         .all()
     )

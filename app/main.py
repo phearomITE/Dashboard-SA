@@ -179,6 +179,7 @@ def create_bot() -> Application:
         .token(settings.TELEGRAM_BOT_TOKEN)
         .request(bot_request)
         .get_updates_request(polling_request)
+        .concurrent_updates(16)
         .post_init(start_dashboard)
         .post_shutdown(stop_dashboard)
         .build()

@@ -12,6 +12,7 @@ import tempfile
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.table import Table, TableStyleInfo
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.data.controllers import controllers_for_group, controllers_for_region, region_from_group
@@ -42,7 +43,7 @@ def _completed_submission_at(
     and group.  The returned time is when the later required component arrived.
     """
     report_time_column = SalePhotoReport.submitted_at
-    pin_time_column = PinHistory.pinned_at
+    pin_time_column = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
     report_start_filter = (
         report_time_column >= range_start
         if include_start
@@ -80,7 +81,7 @@ def _completed_submission_at(
     if pins:
         # The earliest form and earliest pin in this exact interval are enough;
         # identity and group filters prevent cross-user/cross-group matching.
-        completion_times.append(max(reports[0].submitted_at, pins[0].pinned_at))
+        completion_times.append(max(reports[0].submitted_at, pins[0].event_at or pins[0].pinned_at))
     return min(completion_times) if completion_times else None
 
 
