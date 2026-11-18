@@ -266,9 +266,7 @@ def add_regular_tracking_jobs(scheduler: AsyncIOScheduler, app: Application) -> 
                 day_of_week=settings.REMINDER_DAYS,
                 hour=run_time.hour,
                 minute=run_time.minute,
-                # Use the final second of the displayed minute. send_alert_job
-                # then waits ALERT_SETTLE_SECONDS before reading PostgreSQL.
-                second=59,
+                second=0,
                 timezone=settings.APP_TIMEZONE,
             ),
             args=[app, run_time.hour, run_time.minute],
