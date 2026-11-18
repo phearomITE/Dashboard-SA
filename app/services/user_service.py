@@ -257,6 +257,7 @@ def seed_sa_list(db: Session) -> int:
             region=region,
             dealer=(member.get("dealer") or "").strip().upper(),
             name=(member.get("name") or "Unknown").strip(),
+            employee_id=(str(member.get("employee_id") or "").strip() or None),
             position=(member.get("position") or "SA").strip(),
             working_time=canonical_working_time_for_member(member),
             username=username,
