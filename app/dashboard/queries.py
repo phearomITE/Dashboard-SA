@@ -10,7 +10,7 @@ from app.database.models import (
     ControllerGroupAssignment, MissingSalePhotoAlert, MonitoringPreferences,
     PinHistory, Product, SAList, SAUser, SalePhotoReport, TelegramGroup,
 )
-from app.services.shift_config import ALL_FLOWS
+from app.services.shift_config import ALL_FLOWS, break_alert_for_shift
 from app.services.time_service import local_now
 from app.services.user_service import normalize_name
 from app.services.outlet_form import report_details, report_quantities
@@ -44,6 +44,7 @@ def snapshot(db, online, preview):
                            telegram_id=str(user.telegram_user_id if user else row.telegram_user_id or ""),
                            group=row.group_name, group_id=str(gid) if group else "", region=row.region,
                            dealer=row.dealer, controller=controller, position=row.position, shift=row.working_time,
+                           break_alert=break_alert_for_shift(row.working_time),
                            status=status, bound=bool(user), enabled=bool(row.is_active),
                            leave_start=user.alert_pause_start if user else None,
                            leave_end=user.alert_paused_until if user else None,

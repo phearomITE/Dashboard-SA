@@ -6,7 +6,7 @@ import {initials,num,useWorkspace} from './workspace'
 import ProfileAvatar from './ProfileAvatar.vue'
 const props=defineProps({page:String})
 const {s,save,request,refresh,notify}=useWorkspace()
-const query=ref(''), status=ref('All statuses'), region=ref('All regions'), controller=ref('All controllers'), currentPage=ref(1), shift=ref(0)
+const query=ref(''), status=ref('All statuses'), region=ref('All regions'), dealer=ref('All dealers'), shiftFilter=ref('All working times'), controller=ref('All controllers'), currentPage=ref(1), shift=ref(0)
 const uploadOpen=ref(false),masterFile=ref(null),uploadBusy=ref(false),uploadError=ref('')
 const controllerGroupId=ref(s.data.controller_alert_group_id||'-1004464440125'), controllerAlertsEnabled=ref(s.data.controller_alerts_enabled),settingsBusy=ref(false),settingsError=ref('')
 const breakBusy=ref(false), breakError=ref('')
@@ -40,17 +40,20 @@ async function saveControllerAlerts(){
 const lists={roster:'roster',groups:'groups',products:'products',controllers:'controllers'}
 const icons={roster:Users,groups:Layers3,products:Boxes,controllers:ShieldCheck}
 const labels={roster:'members',groups:'groups',products:'products',controllers:'assignments'}
-const columns={roster:['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Group','Controller','Status'],groups:['Telegram group','Region','Members','Monitoring'],
+const columns={roster:['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status'],groups:['Telegram group','Region','Members','Monitoring'],
   products:['Product','SKU','Category','Status'],controllers:['Controller','Telegram ID','Scope','Assignment']}
 const rows=computed(()=>s.data[lists[props.page]]||[])
+const dealerOptions=computed(()=>[...new Set(rows.value.filter(x=>region.value==='All regions'||x.region===region.value).map(x=>x.dealer).filter(Boolean))].sort())
+const shiftOptions=computed(()=>[...new Set(rows.value.map(x=>x.shift).filter(Boolean))].sort())
+watch(region,()=>{if(dealer.value!=='All dealers'&&!dealerOptions.value.includes(dealer.value))dealer.value='All dealers'})
 const filtered=computed(()=>rows.value.filter(row=>{
   const match=Object.values(row).some(v=>String(v??'').toLocaleLowerCase().includes(query.value.toLocaleLowerCase().trim()))
   return match&&(status.value==='All statuses'||row.enabled===(status.value==='Enabled'))&&(region.value==='All regions'||row.region===region.value)
-    &&(props.page!=='roster'||controller.value==='All controllers'||row.controller===controller.value)
+    &&(props.page!=='roster'||((dealer.value==='All dealers'||row.dealer===dealer.value)&&(shiftFilter.value==='All working times'||row.shift===shiftFilter.value)&&(controller.value==='All controllers'||row.controller===controller.value)))
 }))
 const pages=computed(()=>Math.max(1,Math.ceil(filtered.value.length/12)))
 const visible=computed(()=>filtered.value.slice((currentPage.value-1)*12,currentPage.value*12))
-watch([query,status,region,controller],()=>{currentPage.value=1})
+watch([query,status,region,dealer,shiftFilter,controller],()=>{currentPage.value=1})
 watch(pages,v=>{currentPage.value=Math.min(currentPage.value,v)})
 function manage(row){
   const type={roster:'manageMember',products:'product',groups:'manageGroup',controllers:'manageController'}[props.page]
@@ -72,8 +75,8 @@ function editController(row){
   s.form={type:'memberController',row:{...row,controller_name:existing?.name||'',controller_telegram_id:existing?.telegram_id||'',controller_username:existing?.username||''}}
 }
 function exportRosterCsv(){
-  const header=['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Group','Controller','Status']
-  const lines=[header,...filtered.value.map(r=>[r.telegram_id||'',r.name||'',r.username?('@'+r.username.replace(/^@/,'')):'',r.region||'',r.dealer||'',r.position||'',r.shift||'',r.group||'',r.controller||'',r.status||''])]
+  const header=['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status']
+  const lines=[header,...filtered.value.map(r=>[r.telegram_id||'',r.name||'',r.username?('@'+r.username.replace(/^@/,'')):'',r.region||'',r.dealer||'',r.position||'',r.shift||'',r.break_alert||'12:00pm-1:00pm',r.group||'',r.controller||'',r.status||''])]
   const csv='\uFEFF'+lines.map(line=>line.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(',')).join('\r\n')
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
   a.href=url;a.download=`sa-roster-${s.data.now.slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
@@ -100,6 +103,8 @@ async function submitUploadMaster(){
   <section v-if="lists[page]" class="panel records">
     <div class="record-tools"><label class="search-box"><Search :size="16"/><input v-model="query" :aria-label="'Search '+labels[page]" :placeholder="'Search '+labels[page]+'…'"></label>
       <select v-if="['roster','groups'].includes(page)" v-model="region" class="control" aria-label="Region"><option>All regions</option><option v-for="r in [...new Set(rows.map(x=>x.region).filter(Boolean))].sort()" :key="r">{{r}}</option></select>
+      <select v-if="page==='roster'" v-model="dealer" class="control" aria-label="Dealer filter"><option>All dealers</option><option v-for="d in dealerOptions" :key="d">{{d}}</option></select>
+      <select v-if="page==='roster'" v-model="shiftFilter" class="control" aria-label="Working time filter"><option>All working times</option><option v-for="wt in shiftOptions" :key="wt">{{wt}}</option></select>
       <select v-if="page==='roster'" v-model="controller" class="control" aria-label="Controller filter"><option>All controllers</option><option v-for="name in [...new Set(rows.map(x=>x.controller).filter(Boolean))].sort()" :key="name">{{name}}</option></select>
       <select v-if="page!=='controllers'" v-model="status" class="control" aria-label="Status filter"><option>All statuses</option><option>Enabled</option><option>Disabled</option></select>
       <button v-if="page==='roster'" class="btn" @click="openUploadMaster"><Upload :size="15"/>Upload Master SA</button>
@@ -111,7 +116,7 @@ async function submitUploadMaster(){
         <td><div class="person"><ProfileAvatar v-if="['roster','controllers'].includes(page)" :telegram-id="r.telegram_id" :name="r.name"/>
           <span v-else class="avatar" :class="page==='products'?'tone-2':'tone-0'"><component :is="icons[page]" :size="16"/></span>
           <div><strong>{{r.name}}</strong><small v-if="page==='groups'">{{r.id}}</small></div></div></td>
-        <template v-if="page==='roster'"><td>{{r.username?('@'+r.username.replace(/^@/,'')):'—'}}</td><td>{{r.region||'—'}}</td><td>{{r.dealer||'—'}}</td><td>{{r.position}}</td><td>{{r.shift}}</td><td>{{r.group}}</td><td class="controller-cell" :title="r.controller"><button class="controller-edit" :aria-label="'Edit controller for '+r.name" @click="editController(r)">{{r.controller||'Assign controller'}} <Pencil :size="12"/></button></td><td><span class="badge" :class="r.status==='Active'?'teal':r.enabled?'amber':'gray'"><i/>{{r.status}}</span></td></template>
+        <template v-if="page==='roster'"><td>{{r.username?('@'+r.username.replace(/^@/,'')):'—'}}</td><td>{{r.region||'—'}}</td><td>{{r.dealer||'—'}}</td><td>{{r.position}}</td><td>{{r.shift}}</td><td>{{r.break_alert||'12:00pm-1:00pm'}}</td><td>{{r.group}}</td><td class="controller-cell" :title="r.controller"><button class="controller-edit" :aria-label="'Edit controller for '+r.name" @click="editController(r)">{{r.controller||'Assign controller'}} <Pencil :size="12"/></button></td><td><span class="badge" :class="r.status==='Active'?'teal':r.enabled?'amber':'gray'"><i/>{{r.status}}</span></td></template>
         <template v-else-if="page==='groups'"><td>{{r.region||'—'}}</td><td>{{r.members}}</td><td><span class="badge" :class="r.enabled?'teal':'gray'"><i/>{{r.enabled?'Enabled':'Paused'}}</span></td></template>
         <template v-else-if="page==='products'"><td>{{r.sku}}</td><td>{{r.category||'—'}}</td><td><span class="badge" :class="r.enabled?'teal':'gray'"><i/>{{r.enabled?'Enabled':'Disabled'}}</span></td></template>
         <template v-else><td>{{r.telegram_id}}</td><td>{{r.scope}}</td><td>{{r.regional?'Regional':'Dealer group'}}</td></template>

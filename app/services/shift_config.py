@@ -94,11 +94,11 @@ def _sa_7_windows() -> tuple[CheckWindow, ...]:
 
 
 def _sa_730_windows() -> tuple[CheckWindow, ...]:
-    """07:30-17:00 exception: first 08:20, lunch 11:40-13:00, last 16:20-16:40."""
+    """07:30-17:00 exception: first 08:10, lunch 11:50-13:00, last 16:20-16:40."""
     windows: list[CheckWindow] = [
-        _window("sa_730_first_photo", "07:30", "08:20", FIRST_PHOTO_TITLE),
+        _window("sa_730_first_photo", "07:30", "08:10", FIRST_PHOTO_TITLE),
     ]
-    windows.extend(_chain_windows("sa_730_morning", "08:20", "11:40"))
+    windows.extend(_chain_windows("sa_730_morning", "08:10", "11:50"))
     windows.append(_window("sa_730_afternoon_start", "13:00", "13:20"))
     afternoon = _chain_windows("sa_730_afternoon", "13:20", "16:40")
     if afternoon:
@@ -108,25 +108,25 @@ def _sa_730_windows() -> tuple[CheckWindow, ...]:
 
 
 def _sa_630_windows() -> tuple[CheckWindow, ...]:
-    """06:30-16:30: first 07:20, lunch 11:40-13:00, last 16:00-16:20."""
+    """06:30-16:30: first 07:20, lunch 11:40-13:00, last 15:40-16:00."""
     windows: list[CheckWindow] = [
         _window("sa_630_first_photo", "06:30", "07:20", FIRST_PHOTO_TITLE),
     ]
     windows.extend(_chain_windows("sa_630_morning", "07:20", "11:40"))
     windows.append(_window("sa_630_afternoon_start", "13:00", "13:20"))
-    afternoon = _chain_windows("sa_630_afternoon", "13:20", "16:20")
+    afternoon = _chain_windows("sa_630_afternoon", "13:20", "16:00")
     if afternoon:
-        afternoon[-1] = _window("sa_630_last", "16:00", "16:20", LAST_PHOTO_TITLE, is_last=True)
+        afternoon[-1] = _window("sa_630_last", "15:40", "16:00", LAST_PHOTO_TITLE, is_last=True)
     windows.extend(afternoon)
     return tuple(windows)
 
 
 def _commando_windows() -> tuple[CheckWindow, ...]:
-    """09:00-20:00 exception with 20-minute checks and two breaks."""
+    """09:00-20:00 exception: first 09:50, 20-minute checks, breaks 12:00-13:00 & 17:20-17:50."""
     windows: list[CheckWindow] = [
-        _window("commando_first_photo", "09:00", "09:30", FIRST_PHOTO_TITLE),
+        _window("commando_first_photo", "09:00", "09:50", FIRST_PHOTO_TITLE),
     ]
-    windows.extend(_chain_windows("commando_morning", "09:30", "11:50"))
+    windows.extend(_chain_windows("commando_morning", "09:50", "11:50"))
     windows.append(_window("commando_afternoon_start", "13:00", "13:20"))
     windows.extend(_chain_windows("commando_afternoon", "13:20", "17:20"))
     evening = _chain_windows("commando_evening", "17:50", "19:30")
@@ -219,11 +219,11 @@ def flow_key_for_position(position: str | None, working_time: str | None = None,
     if "7:00" in wt or "17:00" in wt or "5:00pm" in wt:
         return SA_7_FLOW.key
 
-    if at in {"9:30am", "09:30am", "9:30", "09:30"}:
+    if at in {"9:30am", "09:30am", "9:30", "09:30", "9:50am", "09:50am", "9:50", "09:50"}:
         return COMMANDO_FLOW.key
     if at in {"7:20am", "07:20am", "7:20", "07:20"}:
         return SA_630_FLOW.key
-    if at in {"8:20am", "08:20am", "8:20", "08:20"}:
+    if at in {"8:10am", "08:10am", "8:10", "08:10", "8:20am", "08:20am", "8:20", "08:20"}:
         return SA_FLOW.key
 
     if "commando" in value or "cammondo" in value:
@@ -243,3 +243,10 @@ def flow_by_key(flow_key: str | None) -> ShiftFlow:
         if flow.key == key:
             return flow
     return SA_7_FLOW
+
+
+def break_alert_for_shift(working_time: str | None) -> str:
+    wt = _compact_time(working_time)
+    if "9:00" in wt or "20:00" in wt or "8:00pm" in wt:
+        return "17:20pm-17:50pm"
+    return "12:00pm-1:00pm"
