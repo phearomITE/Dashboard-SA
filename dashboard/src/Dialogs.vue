@@ -6,7 +6,7 @@ const {s,save,download}=useWorkspace()
 const source=s.form, row=source.row||{}, type=ref(source.type), err=ref(''), dialog=ref(null)
 const controllerChoices=computed(()=>[...new Map(s.data.controllers.filter(c=>Number(c.telegram_id)>0).map(c=>[String(c.telegram_id),c])).values()].sort((a,b)=>a.name.localeCompare(b.name)))
 const values=reactive({name:source.type==='memberController'?(row.controller_name||''):(row.name||''),sku:row.sku||'',category:row.category||'',position:row.position||positions[0],shift:row.shift||shifts[1],
-  group_id:source.type==='group'?'':row.group_id||s.data.groups[0]?.id||'',telegram_id:source.type==='memberController'?(row.controller_telegram_id||''):(row.telegram_id||''),dealer:row.dealer||'',period:source.period||({AL_DAY:'day',AL_MORNING:'morning',AL_AFTERNOON:'afternoon',AL_RANGE:'range'}[row.leave_reason]||'day'),scope:source.type==='memberController'?((row.region||'')+'-'+(row.dealer||'')):(row.scope||''),username:source.type==='memberController'?(row.controller_username||''):(row.username||''),
+  group_id:source.type==='group'?'':row.group_id||s.data.groups[0]?.id||'',telegram_id:source.type==='memberController'?(row.controller_telegram_id||''):(row.telegram_id||''),employee_id:row.employee_id||'',dealer:row.dealer||'',period:source.period||({AL_DAY:'day',AL_MORNING:'morning',AL_AFTERNOON:'afternoon',AL_RANGE:'range'}[row.leave_reason]||'day'),scope:source.type==='memberController'?((row.region||'')+'-'+(row.dealer||'')):(row.scope||''),username:source.type==='memberController'?(row.controller_username||''):(row.username||''),
   kind:source.kind||'missing',day:s.data.now.slice(0,10),start_date:row.leave_start?.slice(0,10)||s.data.now.slice(0,10),end_date:row.leave_end?.slice(0,10)||s.data.now.slice(0,10),region:'all',member_region:row.region||'R1',controller_id:''})
 const titles={product:row.id?'Edit product':'Add product',member:'Add member',manageMember:'Manage member',editMember:'Edit member',memberController:'Edit dealer controller',
   leave:'Set annual leave',group:'Register Telegram group',manageGroup:'Manage Telegram group',controller:'Assign controller',
@@ -67,8 +67,8 @@ async function submit(){
     switch(type.value){
       case 'export': return download(v.kind,v.day,v.region)
       case 'product': return save(row.id?'products/'+row.id:'products',row.id?'PUT':'POST',{name:v.name,sku:v.sku,category:v.category},'Product saved.')
-      case 'member': return save('members','POST',{position:v.position,shift:v.shift,group_id:v.group_id,telegram_id:v.telegram_id,dealer:v.dealer,controller_id:v.controller_id},'Member added.')
-      case 'editMember':return save('members/'+row.id,'PUT',{name:v.name,username:v.username,telegram_id:v.telegram_id,
+      case 'member': return save('members','POST',{position:v.position,shift:v.shift,group_id:v.group_id,telegram_id:v.telegram_id,employee_id:v.employee_id,dealer:v.dealer,controller_id:v.controller_id},'Member added.')
+      case 'editMember':return save('members/'+row.id,'PUT',{name:v.name,username:v.username,telegram_id:v.telegram_id,employee_id:v.employee_id,
         region:v.member_region,dealer:v.dealer,position:v.position,shift:v.shift,group_id:v.group_id},'Member updated.')
       case 'memberController':return save('members/'+row.id+'/controller','PUT',
         {name:v.name,username:v.username,telegram_id:v.telegram_id},'Dealer controller updated.')
@@ -97,10 +97,11 @@ async function submit(){
     <template v-if="type==='product'"><label>Product name<input v-model.trim="values.name" required maxlength="160"></label><label>SKU<input v-model.trim="values.sku" required maxlength="64"></label><label>Category <small>(optional)</small><input v-model.trim="values.category" maxlength="80"></label>
       <button v-if="row.id" type="button" class="text-link" @click="choose('toggleProduct')"><Power :size="14"/>{{row.enabled?'Disable product':'Enable product'}}</button></template>
     <template v-if="type==='member'"><label>Telegram group<select v-model="values.group_id" required><option v-for="g in s.data.groups" :key="g.id" :value="g.id">{{g.name}}</option></select></label>
-      <p v-if="!s.data.groups.length" class="error-text">Register a Telegram group first.</p><label>Telegram user ID<input v-model.trim="values.telegram_id" inputmode="numeric" pattern="[1-9][0-9]*" required></label><label>Dealer<input v-model.trim="values.dealer" placeholder="CA1" maxlength="50" required></label>
+      <p v-if="!s.data.groups.length" class="error-text">Register a Telegram group first.</p><label>Telegram user ID<input v-model.trim="values.telegram_id" inputmode="numeric" pattern="[1-9][0-9]*" required></label><label>Employee ID<input v-model.trim="values.employee_id" maxlength="64" placeholder="e.g. EMP001"></label><label>Dealer<input v-model.trim="values.dealer" placeholder="CA1" maxlength="50" required></label>
       <label>Controller<select v-model="values.controller_id" required><option value="" disabled>Choose controller</option><option v-for="c in controllerChoices" :key="c.telegram_id" :value="c.telegram_id">{{c.name}}</option></select></label>
       <p class="form-hint">The selected controller will manage every SA in this region and dealer.</p></template>
     <template v-if="type==='editMember'"><label>Telegram ID<input v-model.trim="values.telegram_id" inputmode="numeric" pattern="[1-9][0-9]*" required></label>
+      <label>Employee ID<input v-model.trim="values.employee_id" maxlength="64" placeholder="e.g. EMP001"></label>
       <label>SA name<input v-model.trim="values.name" maxlength="255" required></label><label>Username<input v-model.trim="values.username" maxlength="255" placeholder="@username"></label>
       <label>Region<select v-model="values.member_region"><option v-for="n in 8" :key="n">{{'R'+n}}</option></select></label>
       <label>Dealer<input v-model.trim="values.dealer" maxlength="50" required></label>

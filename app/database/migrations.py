@@ -214,11 +214,13 @@ def add_missing_columns() -> None:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_photo_reports_media_group_id ON sale_photo_reports(media_group_id)"))
 
         if "sa_list" in tables:
-            for name, sql_type in {"source_key": "VARCHAR(500)",
+            for name, sql_type in {"employee_id": "VARCHAR(64)",
+                                   "source_key": "VARCHAR(500)",
                                    "dashboard_override": "INTEGER NOT NULL DEFAULT 0",
                                    "is_deleted": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if name not in _columns(conn, "sa_list"):
                     conn.execute(text(f"ALTER TABLE sa_list ADD COLUMN {name} {sql_type}"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sa_list_employee_id ON sa_list(employee_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sa_list_source_key ON sa_list(source_key)"))
 
         for table_name in ["pin_history", "sale_photo_reports"]:

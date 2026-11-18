@@ -42,6 +42,7 @@ def snapshot(db, online, preview):
         controller = ", ".join(c.name for c in assigned) or row.controller or ""
         roster.append(dict(id=row.id, name=row.name, username=row.username or (user.username if user else "") or "",
                            telegram_id=str(user.telegram_user_id if user else row.telegram_user_id or ""),
+                           employee_id=row.employee_id or "",
                            group=row.group_name, group_id=str(gid) if group else "", region=row.region,
                            dealer=row.dealer, controller=controller, position=row.position, shift=row.working_time,
                            break_alert=break_alert_for_shift(row.working_time),

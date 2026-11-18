@@ -40,7 +40,7 @@ async function saveControllerAlerts(){
 const lists={roster:'roster',groups:'groups',products:'products',controllers:'controllers'}
 const icons={roster:Users,groups:Layers3,products:Boxes,controllers:ShieldCheck}
 const labels={roster:'members',groups:'groups',products:'products',controllers:'assignments'}
-const columns={roster:['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status'],groups:['Telegram group','Region','Members','Monitoring'],
+const columns={roster:['Telegram ID','Employee ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status'],groups:['Telegram group','Region','Members','Monitoring'],
   products:['Product','SKU','Category','Status'],controllers:['Controller','Telegram ID','Scope','Assignment']}
 const rows=computed(()=>s.data[lists[props.page]]||[])
 const dealerOptions=computed(()=>[...new Set(rows.value.filter(x=>region.value==='All regions'||x.region===region.value).map(x=>x.dealer).filter(Boolean))].sort())
@@ -75,15 +75,15 @@ function editController(row){
   s.form={type:'memberController',row:{...row,controller_name:existing?.name||'',controller_telegram_id:existing?.telegram_id||'',controller_username:existing?.username||''}}
 }
 function exportRosterCsv(){
-  const header=['Telegram ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status']
-  const lines=[header,...filtered.value.map(r=>[r.telegram_id||'',r.name||'',r.username?('@'+r.username.replace(/^@/,'')):'',r.region||'',r.dealer||'',r.position||'',r.shift||'',r.break_alert||'12:00pm-1:00pm',r.group||'',r.controller||'',r.status||''])]
+  const header=['Telegram ID','Employee ID','SA Name','Username','Region','Dealer','Position','Working Time','Break Alert','Group','Controller','Status']
+  const lines=[header,...filtered.value.map(r=>[r.telegram_id||'',r.employee_id||'',r.name||'',r.username?('@'+r.username.replace(/^@/,'')):'',r.region||'',r.dealer||'',r.position||'',r.shift||'',r.break_alert||'12:00pm-1:00pm',r.group||'',r.controller||'',r.status||''])]
   const csv='\uFEFF'+lines.map(line=>line.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(',')).join('\r\n')
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
   a.href=url;a.download=`sa-roster-${s.data.now.slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
 }
 function openUploadMaster(){masterFile.value=null;uploadError.value='';uploadOpen.value=true}
 function downloadMasterTemplate(){
-  const header='Telegram ID,SA Name,Username,Region,Dealer,Position,Working Time,Group,Controller\r\n'
+  const header='Telegram ID,Employee ID,SA Name,Username,Region,Dealer,Position,Working Time,Group,Controller\r\n'
   const blob=new Blob(['\uFEFF'+header],{type:'text/csv;charset=utf-8'})
   const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='master-sa-template.csv';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000)
 }
@@ -113,6 +113,7 @@ async function submitUploadMaster(){
     <div class="table-scroll"><table :class="{'roster-table':page==='roster'}"><thead><tr><th v-for="c in columns[page]" :key="c">{{c}}</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
       <tr v-for="r in visible" :key="r.id||r.scope+'-'+r.telegram_id">
         <td v-if="page==='roster'" class="roster-id">{{r.telegram_id||'—'}}</td>
+        <td v-if="page==='roster'" class="roster-id">{{r.employee_id||'—'}}</td>
         <td><div class="person"><ProfileAvatar v-if="['roster','controllers'].includes(page)" :telegram-id="r.telegram_id" :name="r.name"/>
           <span v-else class="avatar" :class="page==='products'?'tone-2':'tone-0'"><component :is="icons[page]" :size="16"/></span>
           <div><strong>{{r.name}}</strong><small v-if="page==='groups'">{{r.id}}</small></div></div></td>
@@ -128,7 +129,7 @@ async function submitUploadMaster(){
   <Teleport v-if="uploadOpen" to="body"><div class="dialog-overlay" @click.self="!uploadBusy&&(uploadOpen=false)"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="upload-master-title">
     <div class="dialog-head"><div><span class="dialog-context">SA Roster</span><h2 id="upload-master-title">Upload Master SA</h2></div><button class="icon" aria-label="Close upload" :disabled="uploadBusy" @click="uploadOpen=false"><X :size="18"/></button></div>
     <form @submit.prevent="submitUploadMaster">
-      <div class="dialog-copy">Upload an Excel (<code>.xlsx</code>) or CSV (<code>.csv</code>) file with columns: <strong>Telegram ID, SA Name, Username, Region, Dealer, Position, Working Time, Group, Controller</strong>.</div>
+      <div class="dialog-copy">Upload an Excel (<code>.xlsx</code>) or CSV (<code>.csv</code>) file with columns: <strong>Telegram ID, Employee ID, SA Name, Username, Region, Dealer, Position, Working Time, Group, Controller</strong>.</div>
       <button type="button" class="text-link" style="display:inline-flex;align-items:center;gap:6px;margin:12px 0" @click="downloadMasterTemplate"><Download :size="14"/>Download CSV template</button>
       <label>Master SA file<input type="file" accept=".xlsx,.csv" required @change="masterFile=$event.target.files[0];uploadError=''"></label>
       <div v-if="uploadError" class="error-text" role="alert">{{uploadError}}</div>

@@ -98,6 +98,7 @@ class SAList(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    employee_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     region: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     dealer: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)

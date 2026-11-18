@@ -68,12 +68,14 @@ class MemberEdit(Input):
 class MemberAdd(MemberEdit):
     group_id: int = Field(lt=0, ge=-(2**52))
     telegram_id: int = Field(gt=0, lt=2**52)
+    employee_id: str = Field(default="", max_length=64)
     dealer: str = Field(min_length=1, max_length=50)
     controller_id: int = Field(gt=0, lt=2**52)
 
 
 class MemberFullEdit(MemberEdit):
     telegram_id: int = Field(gt=0, lt=2**52)
+    employee_id: str = Field(default="", max_length=64)
     name: str = Field(min_length=1, max_length=255)
     username: str = Field(default="", max_length=255)
     region: str = Field(min_length=2, max_length=50)
@@ -457,7 +459,8 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
             raise HTTPException(409, "Restore this member before adding them.")
         users.add_manual_user(db, group_id=group.group_id, group_name=group.group_name,
                               telegram_user_id=body.telegram_id, name=f"Telegram User {body.telegram_id}",
-                              position=body.position, working_time=body.shift, dealer=body.dealer, username=None)
+                              position=body.position, working_time=body.shift, dealer=body.dealer, username=None,
+                              employee_id=body.employee_id.strip() or None)
         db.query(ControllerGroupAssignment).filter_by(group_code=scope).delete(synchronize_session=False)
         db.add(ControllerGroupAssignment(group_code=scope, user_id=body.controller_id, name=selected.name,
                                          username=selected.username or "",
@@ -488,6 +491,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
         old_telegram_id = user.telegram_user_id if user else None
         username = users.normalize_username(body.username)
         row.telegram_user_id, row.name, row.username = body.telegram_id, body.name, username
+        row.employee_id = body.employee_id.strip() or None
         row.region, row.dealer, row.group_name = region, dealer, group.group_name
         row.position, row.working_time = body.position, body.shift
         row.dashboard_override = 1

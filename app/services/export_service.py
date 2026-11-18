@@ -480,7 +480,7 @@ def create_sa_list_workbook(db: Session) -> Path:
     headers = [
         "No", "Telegram ID", "SA Name", "Username", "Region", "Dealer",
         "Position", "Working Time", "Group", "Controller", "Status",
-        "Profile Source", "Last Profile Update",
+        "Profile Source", "Last Profile Update", "Employee ID",
     ]
     ws.append(headers)
     header_fill = PatternFill("solid", fgColor="1F4E78")
@@ -499,15 +499,16 @@ def create_sa_list_workbook(db: Session) -> Path:
             "Active" if row.is_active == 1 else "Removed",
             "Telegram ID" if row.telegram_user_id else "Awaiting Telegram binding",
             row.updated_at,
+            row.employee_id or "",
         ])
-    widths = [8, 18, 38, 24, 10, 12, 24, 20, 34, 34, 12, 26, 22]
+    widths = [8, 18, 38, 24, 10, 12, 24, 20, 34, 34, 12, 26, 22, 16]
     for idx, width in enumerate(widths, 1):
         ws.column_dimensions[ws.cell(1, idx).column_letter].width = width
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = Alignment(vertical="center", wrap_text=True)
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:M{max(1, ws.max_row)}"
+    ws.auto_filter.ref = f"A1:N{max(1, ws.max_row)}"
     output_dir = Path(tempfile.mkdtemp(prefix="sa_list_export_"))
     output_path = output_dir / f"SA_List_{datetime.now().date().isoformat()}.xlsx"
     wb.save(output_path)

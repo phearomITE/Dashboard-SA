@@ -1040,6 +1040,7 @@ def add_manual_user(
     username: str | None,
     working_time: str,
     telegram_user_id: int | None = None,
+    employee_id: str | None = None,
 ) -> tuple[SAUser, bool]:
     """Add or update one controller-managed SA record.
 
@@ -1130,6 +1131,7 @@ def add_manual_user(
             region=region,
             dealer=clean_dealer,
             name=clean_name,
+            employee_id=(employee_id or "").strip() or None,
             position=clean_position,
             working_time=clean_working_time,
             username=clean_username,
@@ -1143,6 +1145,8 @@ def add_manual_user(
         )
         db.add(list_row)
     else:
+        if employee_id is not None:
+            list_row.employee_id = employee_id.strip() or None
         list_row.region = region
         list_row.dealer = clean_dealer
         list_row.position = clean_position

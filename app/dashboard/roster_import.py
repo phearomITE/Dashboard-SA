@@ -27,6 +27,13 @@ def parse_master_sa_rows(rows):
         "telegram_id": "telegram_id",
         "telegram user id": "telegram_id",
         "telegram_user_id": "telegram_id",
+        "employee id": "employee_id",
+        "employee_id": "employee_id",
+        "emp id": "employee_id",
+        "emp_id": "employee_id",
+        "staff id": "employee_id",
+        "staff_id": "employee_id",
+        "id": "employee_id",
         "sa name": "name",
         "sa_name": "name",
         "name": "name",
@@ -86,7 +93,7 @@ def parse_master_sa_rows(rows):
             controller = default_ctrl
         else:
             controller = raw_ctrl
-        parsed.append({
+        entry = {
             "telegram_user_id": telegram_id,
             "name": name,
             "username": username,
@@ -96,7 +103,10 @@ def parse_master_sa_rows(rows):
             "working_time": working_time,
             "group_name": group_name,
             "controller": controller,
-        })
+        }
+        if "employee_id" in idx:
+            entry["employee_id"] = cell(row, "employee_id").split(".")[0].strip() or None
+        parsed.append(entry)
 
     if not parsed:
         raise ValueError("The uploaded file contains no valid SA member rows.")
@@ -216,8 +226,11 @@ def import_master_sa(db, content: bytes, extension: str):
         if row is not None:
             retained_ids.add(row.id)
             old_gnorm = normalize_group(row.group_name)
+            has_emp_col = "employee_id" in m
+            emp_val = m.get("employee_id")
             changed = (
                 row.telegram_user_id != tid
+                or (has_emp_col and row.employee_id != emp_val)
                 or row.name != m["name"]
                 or row.username != m["username"]
                 or row.region != m["region"]
@@ -230,6 +243,8 @@ def import_master_sa(db, content: bytes, extension: str):
                 or row.is_active != 1
             )
             row.telegram_user_id = tid
+            if has_emp_col:
+                row.employee_id = emp_val
             row.name = m["name"]
             row.username = m["username"]
             row.region = m["region"]
@@ -251,6 +266,7 @@ def import_master_sa(db, content: bytes, extension: str):
         else:
             row = SAList(
                 telegram_user_id=tid,
+                employee_id=m.get("employee_id"),
                 name=m["name"],
                 username=m["username"],
                 region=m["region"],

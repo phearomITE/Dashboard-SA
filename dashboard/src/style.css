@@ -133,7 +133,7 @@ tbody tr:hover{background:#fafcfb}
 .control{padding:8px 10px;font-size:12px}
 .record-count{margin-left:auto;font-size:12px;color:var(--muted)}
 .records td{padding-top:9px;padding-bottom:9px}
-.roster-table{min-width:1320px}
+.roster-table{min-width:1420px}
 .roster-table th,.roster-table td{padding-left:10px;padding-right:10px}
 .roster-table td:first-child,.roster-table th:first-child{padding-left:14px}
 .roster-table td:last-child,.roster-table th:last-child{padding-right:14px}
