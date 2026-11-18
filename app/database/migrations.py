@@ -14,16 +14,62 @@ def _columns(conn, table_name: str) -> list[str]:
     return [c["name"] for c in inspector.get_columns(table_name)]
 
 
+def _indexes(conn, table_name: str) -> set[str]:
+    inspector = inspect(conn)
+    if table_name not in inspector.get_table_names():
+        return set()
+    return {idx["name"] for idx in inspector.get_indexes(table_name) if idx.get("name")}
+
+
+def _ensure_index(conn, table_name: str, index_name: str, ddl: str) -> None:
+    """Create an index only if missing so PostgreSQL avoids ShareLock on existing tables."""
+    if index_name not in _indexes(conn, table_name):
+        conn.execute(text(ddl))
+
+
+def _apply_employee_id_migration() -> None:
+    """Add sa_list.employee_id in its own minimal transaction without locking pin/report tables."""
+    with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SET LOCAL lock_timeout = '5000ms'"))
+        cols = _columns(conn, "sa_list")
+        if cols and "employee_id" not in cols:
+            conn.execute(text("ALTER TABLE sa_list ADD COLUMN employee_id VARCHAR(64)"))
+        if cols:
+            _ensure_index(
+                conn,
+                "sa_list",
+                "ix_sa_list_employee_id",
+                "CREATE INDEX IF NOT EXISTS ix_sa_list_employee_id ON sa_list (employee_id)",
+            )
+        if "applied_sa_masters" in inspect(conn).get_table_names():
+            conn.execute(
+                text("INSERT INTO applied_sa_masters (version) VALUES ('schema-2026-11-18-employee-id') ON CONFLICT DO NOTHING")
+            )
+
+
 def add_missing_columns() -> None:
+    has_2026_11_17 = False
     try:
         with engine.connect() as chk:
-            done = chk.execute(
-                text("SELECT 1 FROM applied_sa_masters WHERE version = 'schema-2026-11-18-employee-id'")
-            ).scalar()
-            if done == 1:
+            versions = {
+                row[0]
+                for row in chk.execute(
+                    text(
+                        "SELECT version FROM applied_sa_masters "
+                        "WHERE version IN ('schema-2026-11-17', 'schema-2026-11-18-employee-id')"
+                    )
+                ).fetchall()
+            }
+            if "schema-2026-11-18-employee-id" in versions:
                 return
+            has_2026_11_17 = "schema-2026-11-17" in versions
     except Exception:
         pass
+
+    if has_2026_11_17:
+        _apply_employee_id_migration()
+        return
 
     inspector = inspect(engine)
     tables = inspector.get_table_names()
@@ -206,12 +252,13 @@ def add_missing_columns() -> None:
             for name, sql_type in additions.items():
                 if name not in pin_columns:
                     conn.execute(text(f"ALTER TABLE pin_history ADD COLUMN {name} {sql_type}"))
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_pin_update_id ON pin_history(telegram_update_id) WHERE telegram_update_id IS NOT NULL"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pin_route_day ON pin_history(COALESCE(event_at, pinned_at), telegram_user_id)"))
+            _ensure_index(conn, "pin_history", "ix_pin_update_id", "CREATE UNIQUE INDEX IF NOT EXISTS ix_pin_update_id ON pin_history(telegram_update_id) WHERE telegram_update_id IS NOT NULL")
+            _ensure_index(conn, "pin_history", "ix_pin_route_day", "CREATE INDEX IF NOT EXISTS ix_pin_route_day ON pin_history(COALESCE(event_at, pinned_at), telegram_user_id)")
 
         if "sale_photo_reports" in tables:
-            conn.execute(text("ALTER TABLE sale_photo_reports ADD COLUMN IF NOT EXISTS media_group_id VARCHAR(128)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_photo_reports_media_group_id ON sale_photo_reports(media_group_id)"))
+            if "media_group_id" not in _columns(conn, "sale_photo_reports"):
+                conn.execute(text("ALTER TABLE sale_photo_reports ADD COLUMN media_group_id VARCHAR(128)"))
+            _ensure_index(conn, "sale_photo_reports", "ix_sale_photo_reports_media_group_id", "CREATE INDEX IF NOT EXISTS ix_sale_photo_reports_media_group_id ON sale_photo_reports(media_group_id)")
 
         if "sa_list" in tables:
             for name, sql_type in {"employee_id": "VARCHAR(64)",
@@ -220,8 +267,8 @@ def add_missing_columns() -> None:
                                    "is_deleted": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if name not in _columns(conn, "sa_list"):
                     conn.execute(text(f"ALTER TABLE sa_list ADD COLUMN {name} {sql_type}"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sa_list_employee_id ON sa_list(employee_id)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sa_list_source_key ON sa_list(source_key)"))
+            _ensure_index(conn, "sa_list", "ix_sa_list_employee_id", "CREATE INDEX IF NOT EXISTS ix_sa_list_employee_id ON sa_list(employee_id)")
+            _ensure_index(conn, "sa_list", "ix_sa_list_source_key", "CREATE INDEX IF NOT EXISTS ix_sa_list_source_key ON sa_list(source_key)")
 
         for table_name in ["pin_history", "sale_photo_reports"]:
             if table_name in tables:
