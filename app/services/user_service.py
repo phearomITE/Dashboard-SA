@@ -1512,6 +1512,7 @@ def save_location(
     lon: float,
     *,
     event_at: datetime | None = None,
+    pinned_at: datetime | None = None,
     report_caption: str | None = None,
     telegram_update_id: int | None = None,
 ) -> SAUser:
@@ -1521,14 +1522,16 @@ def save_location(
     if telegram_update_id is not None and db.query(PinHistory.id).filter_by(telegram_update_id=telegram_update_id).first():
         return item
     effective_time = _to_local_naive(event_at) or now
+    recorded_pin_time = _to_local_naive(pinned_at) or now
     map_link = create_maps_link(lat, lon)
     window_start = get_current_interval_start(effective_time, settings.ALERT_INTERVAL_MINUTES)
     window_end = get_current_interval_end(effective_time, settings.ALERT_INTERVAL_MINUTES)
 
-    item.lat = lat
-    item.lon = lon
-    item.map_link = map_link
-    item.last_pin_at = now
+    if item.last_pin_at is None or effective_time >= item.last_pin_at:
+        item.lat = lat
+        item.lon = lon
+        item.map_link = map_link
+        item.last_pin_at = effective_time
     item.updated_at = now
 
     from app.services.outlet_form import report_details
@@ -1545,7 +1548,7 @@ def save_location(
         lat=lat,
         lon=lon,
         map_link=map_link,
-        pinned_at=now,
+        pinned_at=recorded_pin_time,
         window_start=window_start,
         window_end=window_end,
         event_at=effective_time,

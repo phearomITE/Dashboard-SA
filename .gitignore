@@ -32,3 +32,6 @@ scripts/test_management_command_router.py
 scripts/validate_new_features.py
 scripts/validate_project.py
 scripts/validate_late_voice_v13.py
+
+*.session
+*.session-journal

@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     CONTROLLER_USERNAME: str = ""
     CONTROLLER_USER_ID: int = 0
 
+    TELETHON_API_ID: int | None = None
+    TELETHON_API_HASH: str = ""
+    TELETHON_STRING_SESSION: str = ""
+    TELETHON_SESSION_FILE: str = "backups/telethon_recovery.session"
+
     # Ignore legacy .env keys from earlier releases and accept UTF-8 files
     # safely after Windows PowerShell rewrites them.
     model_config = SettingsConfigDict(
