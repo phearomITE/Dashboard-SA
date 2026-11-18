@@ -3,9 +3,10 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 from html import escape
+import time
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert
 from telegram.error import NetworkError, RetryAfter
 from telegram.ext import Application
@@ -13,8 +14,9 @@ from telegram.ext import Application
 from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.data.controllers import EXPORT_AUDIT_RECIPIENTS, controller_label_for_group, controller_topic_for_group
+from app.data.sa_members import normalize_group
 from app.database.database import SessionLocal
-from app.database.models import MissingSalePhotoAlert, MonitoringPreferences, PinHistory, SAUser, SalePhotoReport
+from app.database.models import MissingSalePhotoAlert, MonitoringPreferences, PinHistory, SAList, SAUser, SalePhotoReport
 from app.services.formatter import sale_photo_missing_alert_message, special_window_alert_message
 from app.services.shift_config import (
     ALL_FLOWS,
@@ -264,9 +266,17 @@ def _prepare_scheduled_alerts_sync(run_hour: int, run_minute: int, now: datetime
         for u in all_users:
             users_by_group[u.group_id].append(u)
 
-        # Only sync groups on-the-fly if they have no official users loaded yet.
-        for g in groups:
-            if not users_by_group.get(g.group_id):
+        # Only sync groups on-the-fly if they actually have active SAList members missing from sa_users.
+        missing_groups = [g for g in groups if not users_by_group.get(g.group_id)]
+        if missing_groups:
+            active_list_groups = {
+                normalize_group(r[0])
+                for r in db.query(SAList.group_name).filter(SAList.is_deleted == 0, SAList.is_active == 1).all()
+                if r[0]
+            }
+            for g in missing_groups:
+                if normalize_group(g.group_name) not in active_list_groups:
+                    continue
                 sync_group_members_from_list(db, g.group_id, g.group_name)
                 users_by_group[g.group_id] = (
                     db.query(SAUser)
@@ -493,9 +503,84 @@ def _attach_alert_message_ids_batch(attachments: list[tuple[int, datetime, datet
     db = SessionLocal()
     try:
         for group_id, start, end, user_ids, message_id in attachments:
-            attach_alert_message_id(db, group_id, start, end, user_ids, message_id)
+            if not user_ids:
+                continue
+            db.execute(
+                update(MissingSalePhotoAlert)
+                .where(
+                    MissingSalePhotoAlert.group_id == group_id,
+                    MissingSalePhotoAlert.window_start == start,
+                    MissingSalePhotoAlert.window_end == end,
+                    MissingSalePhotoAlert.telegram_user_id.in_(user_ids),
+                )
+                .values(alert_message_id=message_id)
+            )
+        db.commit()
     finally:
         db.close()
+
+
+def _batch_controller_copies(items: list[dict]) -> list[dict]:
+    """Merge controller copies per (chat_id, topic_id) to stay well under Telegram's 20 msg/min group limit."""
+    grouped: dict[tuple[int, int | None], list[str]] = defaultdict(list)
+    for item in items:
+        ck = item.get("ctrl_kwargs")
+        if not ck:
+            continue
+        grouped[(ck["chat_id"], ck.get("message_thread_id"))].append(ck["text"])
+
+    batches: list[dict] = []
+    for (chat_id, thread_id), texts in grouped.items():
+        current = ""
+        for entry in texts:
+            sep = "\n\n" if current else ""
+            if current and len(current) + len(sep) + len(entry) > 3800:
+                kwargs = dict(chat_id=chat_id, text=current, parse_mode="HTML", disable_web_page_preview=True)
+                if thread_id is not None:
+                    kwargs["message_thread_id"] = thread_id
+                batches.append(kwargs)
+                current = entry
+            else:
+                current = f"{current}{sep}{entry}"
+        if current:
+            kwargs = dict(chat_id=chat_id, text=current, parse_mode="HTML", disable_web_page_preview=True)
+            if thread_id is not None:
+                kwargs["message_thread_id"] = thread_id
+            batches.append(kwargs)
+    return batches
+
+
+async def _deliver_controller_copies(application: Application, ctrl_batches: list[dict], audit_texts: list[str]) -> None:
+    for audit_text in audit_texts:
+        for recipient in EXPORT_AUDIT_RECIPIENTS:
+            try:
+                await _send_with_retry(
+                    application,
+                    chat_id=recipient.user_id,
+                    text=audit_text,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.exception("Failed >6-miss escalation recipient=%s", recipient.user_id)
+
+    for idx, send_kwargs in enumerate(ctrl_batches):
+        if idx > 0:
+            await asyncio.sleep(0.5)
+        try:
+            await _send_with_retry(application, **send_kwargs)
+        except NetworkError as net_exc:
+            logger.warning(
+                "Controller alert copy skipped after retry destination=%s topic=%s: %s",
+                send_kwargs["chat_id"],
+                send_kwargs.get("message_thread_id"),
+                net_exc,
+            )
+        except Exception:
+            logger.exception(
+                "Controller alert copy failed destination=%s topic=%s",
+                send_kwargs["chat_id"],
+                send_kwargs.get("message_thread_id"),
+            )
 
 
 async def send_alert_job(application: Application, run_hour: int | None = None, run_minute: int | None = None) -> None:
@@ -525,26 +610,18 @@ async def send_alert_job(application: Application, run_hour: int | None = None, 
         await asyncio.sleep(float(settings.ALERT_SETTLE_SECONDS))
         now = local_now()
 
+    t0 = time.monotonic()
     tasks = await asyncio.to_thread(_prepare_scheduled_alerts_sync, run_hour, run_minute, now)
     if not tasks:
         return
+    t_prep = time.monotonic() - t0
 
-    sem = asyncio.Semaphore(6)
+    # Deliver ALL SA group alerts first without blocking on SA_Controll rate limits.
+    sem = asyncio.Semaphore(12)
     attachments: list[tuple[int, datetime, datetime, list[int], int]] = []
 
-    async def _deliver(item: dict) -> None:
+    async def _deliver_group(item: dict) -> None:
         async with sem:
-            if item["audit_text"]:
-                for recipient in EXPORT_AUDIT_RECIPIENTS:
-                    try:
-                        await _send_with_retry(
-                            application,
-                            chat_id=recipient.user_id,
-                            text=item["audit_text"],
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        logger.exception("Failed >6-miss escalation recipient=%s", recipient.user_id)
             try:
                 sent_message = await _send_with_retry(
                     application,
@@ -570,28 +647,29 @@ async def send_alert_job(application: Application, run_hour: int | None = None, 
                     item["end"],
                     sent_message.message_id,
                 )
-                if item["ctrl_kwargs"]:
-                    try:
-                        await _send_with_retry(application, **item["ctrl_kwargs"])
-                    except NetworkError as net_exc:
-                        logger.warning(
-                            "Controller alert copy skipped after retry group=%s destination=%s: %s",
-                            item["group_id"],
-                            item["ctrl_kwargs"]["chat_id"],
-                            net_exc,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Controller alert copy failed group=%s destination=%s",
-                            item["group_id"],
-                            item["ctrl_kwargs"]["chat_id"],
-                        )
             except Exception as exc:
                 logger.exception("Failed to send alert to group %s: %s", item["group_id"], exc)
 
-    await asyncio.gather(*(_deliver(item) for item in tasks))
+    t_send_start = time.monotonic()
+    await asyncio.gather(*(_deliver_group(item) for item in tasks))
+    t_send = time.monotonic() - t_send_start
+    logger.info(
+        "Scheduled alert cycle %02d:%02d prepared=%s groups in %.2fs, delivered=%s in %.2fs",
+        run_hour,
+        run_minute,
+        len(tasks),
+        t_prep,
+        len(attachments),
+        t_send,
+    )
+
     if attachments:
         await asyncio.to_thread(_attach_alert_message_ids_batch, attachments)
+
+    ctrl_batches = _batch_controller_copies(tasks)
+    audit_texts = [item["audit_text"] for item in tasks if item.get("audit_text")]
+    if ctrl_batches or audit_texts:
+        asyncio.create_task(_deliver_controller_copies(application, ctrl_batches, audit_texts))
 
 
 async def send_special_window_check_job(
