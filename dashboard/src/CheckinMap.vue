@@ -21,6 +21,10 @@ function pinIcon(value,origin=false,active=false){
   return L.divIcon({className:'route-marker',html:badge,iconSize:[28,28],iconAnchor:[14,14]})
 }
 function plainLabel(text){const el=document.createElement('span');el.textContent=text;return el}
+function formatDistanceKm(kmValue){
+  if(kmValue==null||!Number.isFinite(Number(kmValue)))return ''
+  return Number(kmValue).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:2})+' km'
+}
 function dealerIcon(){
   const image=document.createElement('img');image.src=brandLogo;image.alt='Dealer location'
   const badge=document.createElement('span');badge.className='dealer-logo-pin';badge.append(image)
@@ -45,11 +49,15 @@ function repaint(){
     if(props.selected && from && from.seq===p.outlet-1){
       L.polyline([from.coord,coord],{color:'#17715a',weight:3,opacity:.88,dashArray:from.seq===0?'6 6':null,interactive:false}).addTo(points)
     }
+    const legKm=p.leg_km!=null?Number(p.leg_km):(from&&from.seq===p.outlet-1&&map?map.distance(from.coord,coord)/1000:null)
+    const distText=formatDistanceKm(legKm)
+    const distLabel=distText?' · Distance: '+distText:''
+    const tooltipLabel=p.name+' · Outlet '+p.outlet+' · '+p.at.slice(11,16)+distLabel
     legs.set(key,{seq:p.outlet,coord})
     const marker=props.selected
-      ? L.marker(coord,{icon:pinIcon(p.outlet,false,props.focused===p.id),title:p.name+' · Outlet '+p.outlet,zIndexOffset:props.focused===p.id?1000:0})
+      ? L.marker(coord,{icon:pinIcon(p.outlet,false,props.focused===p.id),title:tooltipLabel,zIndexOffset:props.focused===p.id?1000:0})
       : L.circleMarker(coord,{radius:6,color:'#fff',weight:2,fillColor:'#167758',fillOpacity:.94})
-    marker.bindTooltip(plainLabel(p.name+' · Outlet '+p.outlet+' · '+p.at.slice(11,16)))
+    marker.bindTooltip(plainLabel(tooltipLabel))
       .on('click',()=>{emit('select',p.employee_id);emit('focus',p.id)}).addTo(points)
   }
 }
