@@ -7,10 +7,11 @@ export const shifts = ['6:30am-4:30pm', '7:00am-5:00pm', '7:30am-5:00pm', '9:00a
 export const eventNames = { reports: 'Sale report', pins: 'Location pin', alerts: 'Missing alert' }
 export const num = n => Number(n || 0).toLocaleString()
 export const dateLabel = (value, options) => new Date(value.length === 10 ? value + 'T12:00:00' : value).toLocaleDateString('en-US', options)
+export const formatDMY = value => (value && value.length >= 10) ? value.slice(0, 10).split('-').reverse().join('/') : ''
 export const initials = name => (name || '?').split(/\s+/u).slice(0, 2).map(w => Array.from(w)[0]).join('').toUpperCase()
 
 export function createWorkspace() {
-  const s = reactive({ data: null, metrics: null, events: [], total: 0, days: 7, kind: 'all', page: 1,
+  const s = reactive({ data: null, metrics: null, events: [], overviewRows: [], total: 0, days: 7, fromDate: '', toDate: '', kind: 'all', page: 1,
     ready: false, preview: false, authRequired: true, signedIn: false, busy: false, loading: false, error: '', notice: '', form: null })
   let generation = 0
   let noticeTimer
@@ -44,12 +45,22 @@ export function createWorkspace() {
     try {
       const data = await request('workspace')
       if (generation !== run) return
-      if (!s.metrics) s.metrics = { series: [], previous: {}, regional: [], visitors: 0 }
+      if (!s.metrics) s.metrics = { series: [], previous: {}, regional: [], visitors: 0, written_alerts: 0, unwritten_alerts: 0 }
+      const today = (data.now || '').slice(0, 10)
+      if (!s.toDate && today) s.toDate = today
+      if (!s.fromDate && today) s.fromDate = today.slice(0, 8) + '01'
+      if (s.fromDate && s.toDate && s.fromDate > s.toDate) s.fromDate = s.toDate
       Object.assign(s, { data, signedIn: true, error: '' })
-      const [metrics, events] = await Promise.all([request('analytics?days=' + s.days),
-        request('activity?' + new URLSearchParams({ days: s.days, kind: s.kind, page: s.page, size: 10 }))])
+      const rangeParams = s.fromDate && s.toDate ? { from_date: s.fromDate, to_date: s.toDate } : { days: s.days }
+      const [metrics, events, missRes] = await Promise.all([
+        request('analytics?' + new URLSearchParams(rangeParams)),
+        request('activity?' + new URLSearchParams({ ...rangeParams, kind: s.kind, page: s.page, size: 10 })),
+        s.fromDate && s.toDate
+          ? request('missing-report?' + new URLSearchParams({ from_date: s.fromDate, to_date: s.toDate })).catch(() => ({ rows: [] }))
+          : Promise.resolve({ rows: [] }),
+      ])
       if (generation !== run) return
-      Object.assign(s, { metrics, events: events.rows, total: events.total })
+      Object.assign(s, { metrics, events: events.rows, total: events.total, overviewRows: missRes.rows || [] })
     } catch (e) { if (generation === run) s.error = e.message }
     finally { if (generation === run) s.loading = false }
   }

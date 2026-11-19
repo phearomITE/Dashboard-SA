@@ -7,17 +7,50 @@ import './missing-report.css'
 
 const {s,request,refresh,notify}=useWorkspace()
 const today=s.data.now.slice(0,10)
-const from=ref(today),to=ref(today),controller=ref(''),search=ref(''),rows=ref([]),busy=ref(false),error=ref('')
+const from=ref(today),to=ref(today),region=ref(''),dealer=ref(''),controller=ref(''),search=ref(''),rows=ref([]),busy=ref(false),error=ref('')
 const modal=ref(null),modalBusy=ref(false),modalError=ref(''),deleteMode=ref('all')
+const reasonModal=ref(null),reasonSearch=ref('')
 const editForm=reactive({name:'',region:'R1',dealer:'',reason:''})
 let serial=0
+const regions=computed(()=>[...new Set([...(s.data?.roster||[]).map(r=>r.region),...rows.value.map(r=>r.region)].filter(Boolean))].sort())
+const dealers=computed(()=>[...new Set([...(s.data?.roster||[]),...rows.value].filter(r=>!region.value||r.region===region.value).map(r=>r.dealer).filter(Boolean))].sort())
+watch(region,()=>{if(dealer.value&&!dealers.value.includes(dealer.value))dealer.value=''})
 const controllers=computed(()=>[...new Set([...(s.data?.roster||[]).map(r=>r.controller),...rows.value.map(r=>r.controller)].filter(v=>v&&v!=='Unassigned'))].sort())
-const totalSa=computed(()=>(s.data?.roster||[]).filter(r=>(!controller.value||r.controller===controller.value)&&
-  (!search.value||[r.name,r.telegram_id,r.group,r.dealer,r.region].some(v=>String(v||'').toLocaleLowerCase().includes(search.value.toLocaleLowerCase())))).length)
-const filtered=computed(()=>rows.value.filter(r=>(!controller.value||r.controller===controller.value)&&
-  (!search.value||[r.name,r.telegram_id,r.group,r.dealer,r.region].some(v=>String(v||'').toLocaleLowerCase().includes(search.value.toLocaleLowerCase())))))
-const totals=computed(()=>filtered.value.reduce((a,r)=>({visit:a.visit+r.total_visit,
-  miss:a.miss+r.total_miss,reasons:a.reasons+r.reasons.length}),{visit:0,miss:0,reasons:0}))
+const matchRow=r=>{
+  const term=search.value.trim().toLocaleLowerCase()
+  return (!region.value||r.region===region.value)&&(!dealer.value||r.dealer===dealer.value)&&(!controller.value||r.controller===controller.value)&&
+    (!term||[r.name,r.telegram_id,r.employee_id,r.group,r.dealer,r.region].some(v=>String(v||'').toLocaleLowerCase().includes(term)))
+}
+const totalSa=computed(()=>(s.data?.roster||[]).filter(matchRow).length)
+const filtered=computed(()=>rows.value.filter(matchRow))
+const totals=computed(()=>filtered.value.reduce((a,r)=>({
+  visit:a.visit+r.total_visit,
+  miss:a.miss+r.total_miss,
+  reasons:a.reasons+(r.written_count??r.reasons.length),
+  notWritten:a.notWritten+(r.unwritten_count??Math.max(0,r.total_miss-r.reasons.length)),
+}),{visit:0,miss:0,reasons:0,notWritten:0}))
+const writtenRows=computed(()=>filtered.value.filter(r=>r.reasons.length>0||(r.written_count||0)>0))
+const notWrittenRows=computed(()=>filtered.value.filter(r=>r.total_miss>0&&((r.unwritten_count||0)>0||r.reasons.length===0)))
+const reasonModalRows=computed(()=>{
+  const base=reasonModal.value==='written'?writtenRows.value:notWrittenRows.value
+  const term=reasonSearch.value.trim().toLocaleLowerCase()
+  if(!term)return base
+  return base.filter(r=>[r.name,r.telegram_id,r.employee_id,r.group,r.dealer,r.region,r.controller,...r.reasons].some(v=>String(v||'').toLocaleLowerCase().includes(term)))
+})
+function openReasonModal(kind){reasonSearch.value='';reasonModal.value=kind}
+function openEditFromReason(row){reasonModal.value=null;openEdit(row)}
+function exportReasonModalCsv(){
+  const isWritten=reasonModal.value==='written'
+  const header=isWritten
+    ?['SA Name','Telegram ID','Employee ID','Region','Dealer','Group','Controller','Total Visit','Total Miss','Written Reasons']
+    :['SA Name','Telegram ID','Employee ID','Region','Dealer','Group','Controller','Total Visit','Total Miss','Unwritten Alerts','Status']
+  const lines=[header,...reasonModalRows.value.map(r=>isWritten
+    ?[r.name,r.telegram_id,r.employee_id||'',r.region,r.dealer,r.group,r.controller,r.total_visit,r.total_miss,r.reasons.join(' | ')]
+    :[r.name,r.telegram_id,r.employee_id||'',r.region,r.dealer,r.group,r.controller,r.total_visit,r.total_miss,r.unwritten_count??r.total_miss,'Awaiting reason'])]
+  const csv='\uFEFF'+lines.map(line=>line.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(',')).join('\r\n')
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
+  a.href=url;a.download=`${isWritten?'written':'not-written'}-reasons-${from.value}-to-${to.value}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
+}
 async function load(){
   if(!from.value||!to.value||from.value>to.value){error.value='Choose a valid From and To date.';return}
   const run=++serial;busy.value=true;error.value=''
@@ -72,17 +105,47 @@ function exportCsv(){
   <div class="miss-filters">
     <label>From Date<input type="date" v-model="from" :max="today"></label>
     <label>To Date<input type="date" v-model="to" :max="today"></label>
+    <label>Region<select v-model="region"><option value="">All regions</option><option v-for="v in regions" :key="v">{{v}}</option></select></label>
+    <label>Dealer<select v-model="dealer"><option value="">All dealers</option><option v-for="v in dealers" :key="v">{{v}}</option></select></label>
     <label>Controller<select v-model="controller"><option value="">All controllers</option><option v-for="v in controllers" :key="v">{{v}}</option></select></label>
     <label class="miss-search">Search SA<div><Search :size="15"/><input type="search" v-model="search" placeholder="Name, Telegram ID, dealer..."></div></label>
     <button class="btn" @click="exportCsv"><Download :size="15"/>Export CSV</button>
   </div>
   <p v-if="error" class="error-banner" role="alert">{{error}}</p>
-  <div class="miss-summary"><div><small>Total SA</small><strong>{{totalSa}}</strong></div><div><small>SA Miss Report</small><strong>{{filtered.length}}</strong></div><div><small>Total Visit · pins</small><strong>{{totals.visit}}</strong></div><div><small>Total Miss · alerts</small><strong>{{totals.miss}}</strong></div><div><small>Written reasons</small><strong>{{totals.reasons}}</strong></div></div>
+  <div class="miss-summary">
+    <div><small>Total SA</small><strong>{{totalSa}}</strong></div>
+    <div><small>SA Miss Report</small><strong>{{filtered.length}}</strong></div>
+    <div><small>Total Visit · pins</small><strong>{{totals.visit}}</strong></div>
+    <div><small>Total Miss · alerts</small><strong>{{totals.miss}}</strong></div>
+    <button type="button" class="miss-card-btn" @click="openReasonModal('written')"><small>Written reasons</small><strong>{{totals.reasons}}</strong><span>Click to view detail ↗</span></button>
+    <button type="button" class="miss-card-btn not-written" @click="openReasonModal('not_written')"><small>Not Written reasons</small><strong>{{totals.notWritten}}</strong><span>Click to view detail ↗</span></button>
+  </div>
   <p v-if="!busy&&!totals.miss" class="miss-note">No missing-report alerts are stored for this date range. Visits are shown from recorded location pins.</p>
   <div class="miss-table-wrap"><table><thead><tr><th>SA Name</th><th>Telegram ID</th><th>Region / Dealer</th><th>Controller</th><th>Total Visit</th><th>Miss Report</th><th>Total Miss</th><th>Summary Reason</th><th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody><tr v-for="r in filtered" :key="r.telegram_id+'-'+r.group"><td><div class="person"><ProfileAvatar :telegram-id="r.telegram_id" :name="r.name"/><span><strong>{{r.name}}</strong><small>{{r.group}}</small></span></div></td><td>{{r.telegram_id}}</td><td>{{r.region}} / {{r.dealer||'—'}}</td><td>{{r.controller||'—'}}</td><td>{{r.total_visit}}</td><td>{{r.total_miss?(r.reasons.length?'Reason received':'Awaiting reason'):'No alert'}}</td><td><b :class="r.total_miss?'miss-count':''">{{r.total_miss}}</b></td><td class="miss-reasons"><span v-if="r.reasons.length" v-for="reason in r.reasons" :key="reason">{{reason}}</span><span v-if="!r.reasons.length">{{r.total_miss?'Awaiting reason':'—'}}</span></td><td><div class="row-actions"><button class="icon action-icon" :aria-label="'Edit '+r.name" title="Edit miss report" @click="openEdit(r)"><Pencil :size="15"/></button><button class="icon action-icon danger-action" :aria-label="'Delete '+r.name" title="Delete miss report" @click="openDelete(r)"><Trash2 :size="15"/></button></div></td></tr>
       <tr v-if="!filtered.length"><td colspan="9" class="miss-empty">{{busy?'Loading…':'No activity for these filters.'}}</td></tr></tbody></table></div>
 </section>
+<Teleport v-if="reasonModal" to="body"><div class="dialog-overlay" @click.self="reasonModal=null"><section class="dialog reason-detail-modal" role="dialog" aria-modal="true" aria-labelledby="reason-detail-title">
+  <div class="dialog-head"><div><span class="dialog-context">{{from}} to {{to}} · {{reasonModalRows.length}} SA</span>
+    <h2 id="reason-detail-title">{{reasonModal==='written'?'Written reasons detail':'Not Written reasons detail'}}</h2></div>
+    <div class="reason-modal-tools"><label class="reason-modal-search"><Search :size="14"/><input type="search" v-model="reasonSearch" placeholder="Search SA, ID, region, dealer..."></label>
+      <button type="button" class="btn" @click="exportReasonModalCsv"><Download :size="14"/>Export CSV</button>
+      <button type="button" class="icon" aria-label="Close detail popup" @click="reasonModal=null"><X :size="18"/></button></div></div>
+  <div class="reason-table-wrap"><table>
+    <thead><tr v-if="reasonModal==='written'"><th>SA Name</th><th>Telegram ID</th><th>Employee ID</th><th>Region / Dealer</th><th>Group</th><th>Controller</th><th>Total Visit</th><th>Total Miss</th><th>Written Reasons</th><th><span class="sr-only">Actions</span></th></tr>
+      <tr v-else><th>SA Name</th><th>Telegram ID</th><th>Employee ID</th><th>Region / Dealer</th><th>Group</th><th>Controller</th><th>Total Visit</th><th>Total Miss</th><th>Unwritten</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+      <tr v-for="r in reasonModalRows" :key="r.telegram_id+'-'+r.group">
+        <td><div class="person"><ProfileAvatar :telegram-id="r.telegram_id" :name="r.name"/><strong>{{r.name}}</strong></div></td>
+        <td>{{r.telegram_id}}</td><td>{{r.employee_id||'—'}}</td><td>{{r.region}} / {{r.dealer||'—'}}</td><td>{{r.group}}</td><td>{{r.controller||'—'}}</td><td>{{r.total_visit}}</td><td><b class="miss-count">{{r.total_miss}}</b></td>
+        <template v-if="reasonModal==='written'"><td class="miss-reasons"><span v-for="reason in r.reasons" :key="reason">{{reason}}</span></td></template>
+        <template v-else><td><b class="miss-count">{{r.unwritten_count??r.total_miss}}</b></td><td><span class="badge amber"><i/>Awaiting reason</span></td></template>
+        <td><button type="button" class="btn" @click="openEditFromReason(r)"><Pencil :size="13"/>{{reasonModal==='written'?'Edit':'Add reason'}}</button></td>
+      </tr>
+      <tr v-if="!reasonModalRows.length"><td :colspan="reasonModal==='written'?10:11" class="miss-empty">No matching SA records for this filter.</td></tr>
+    </tbody>
+  </table></div>
+</section></div></Teleport>
 <Teleport v-if="modal" to="body"><div class="dialog-overlay" @click.self="closeModal"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="miss-dialog-title">
   <div class="dialog-head"><div><span class="dialog-context">{{modal.row.name}} · {{modal.row.telegram_id}}</span><h2 id="miss-dialog-title">{{modal.type==='edit'?'Edit miss report':'Delete miss report?'}}</h2></div><button class="icon" aria-label="Close dialog" :disabled="modalBusy" @click="closeModal"><X :size="18"/></button></div>
   <form @submit.prevent="submitModal">

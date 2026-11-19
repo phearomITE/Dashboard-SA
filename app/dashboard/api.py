@@ -320,7 +320,13 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
             return Response(payload, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get("/api/live-map")
-    def live_map(day: date | None = None):
+    def live_map(day: date | None = None, from_date: date | None = None, to_date: date | None = None):
+        if from_date or to_date:
+            f = from_date or to_date or day or local_now().date()
+            t = to_date or from_date or day or local_now().date()
+            if t < f or (t - f).days > 366:
+                raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+            return cached_endpoint(("live-map", str(f), str(t)), 15, lambda db: map_day(db, t, from_date=f, to_date=t))
         target = day or local_now().date()
         return cached_endpoint(("live-map", str(target)), 15, lambda db: map_day(db, target))
 
@@ -341,14 +347,21 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
         return await run_in_threadpool(import_dealers, db, bytes(content), format)
 
     @app.get("/api/analytics")
-    def metrics(days: int = Query(7, ge=1, le=30)):
-        return cached_endpoint(("analytics", days), 30, lambda db: analytics(db, days))
+    def metrics(days: int = Query(7, ge=1, le=366), from_date: date | None = None, to_date: date | None = None):
+        if from_date and to_date and (to_date < from_date or (to_date - from_date).days > 366):
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        key = ("analytics", str(from_date or ""), str(to_date or ""), days)
+        return cached_endpoint(key, 30, lambda db: analytics(db, days, from_date=from_date, to_date=to_date))
 
     @app.get("/api/activity")
     def events(kind: Literal["all", "reports", "pins", "alerts"] = "all",
-               days: int = Query(7, ge=1, le=30), page: int = Query(1, ge=1, le=100000),
-               size: int = Query(10, ge=1, le=100)):
-        return cached_endpoint(("activity", days, kind, page, size), 15, lambda db: activity(db, days, kind, page, size))
+               days: int = Query(7, ge=1, le=366), page: int = Query(1, ge=1, le=100000),
+               size: int = Query(10, ge=1, le=100),
+               from_date: date | None = None, to_date: date | None = None):
+        if from_date and to_date and (to_date < from_date or (to_date - from_date).days > 366):
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        key = ("activity", str(from_date or ""), str(to_date or ""), days, kind, page, size)
+        return cached_endpoint(key, 15, lambda db: activity(db, days, kind, page, size, from_date=from_date, to_date=to_date))
 
     @app.get("/api/missing-report")
     def missing(from_date: date, to_date: date):

@@ -49,7 +49,23 @@ async function login() {
 async function logout() {
   try { await signOut(); code.value=''; mobile.value=false } catch(e) { notify(e.message) }
 }
-async function range(e) { s.days=Number(e.target.value); s.page=1; await refresh() }
+async function applyDateRange() {
+  if (!s.fromDate || !s.toDate) return
+  if (s.fromDate > s.toDate) s.fromDate = s.toDate
+  s.page = 1
+  await refresh()
+}
+async function setQuickRange(mode) {
+  const today = (s.data?.now || '').slice(0, 10)
+  if (!today) return
+  if (mode === 'today') { s.fromDate = today; s.toDate = today }
+  else if (mode === '7d') {
+    const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() - 6)
+    s.fromDate = d.toISOString().slice(0, 10); s.toDate = today
+  } else { s.fromDate = today.slice(0, 8) + '01'; s.toDate = today }
+  s.page = 1
+  await refresh()
+}
 </script>
 <template>
   <div v-if="!s.ready || !s.data || (s.authRequired && !s.signedIn)" class="login-page">
@@ -93,8 +109,11 @@ async function range(e) { s.days=Number(e.target.value); s.page=1; await refresh
       <div class="page-content" :class="{'live-map-page':page==='live-map','compact-page':page!=='overview'}" :key="page">
         <div class="page-head"><div><div class="date-line"><span></span>{{dateLabel(s.data.now,{weekday:'long',month:'long',day:'numeric',year:'numeric'})}}</div>
           <h1>{{page==='overview'?'Operations overview':current}}</h1><p>{{descriptions[page]}}</p></div>
-          <div class="page-tools"><label v-if="['overview','activity'].includes(page)" class="range-control"><CalendarDays :size="15"/>
-            <select :value="s.days" aria-label="Reporting period" @change="range"><option :value="7">Last 7 days</option><option :value="14">Last 14 days</option><option :value="30">Last 30 days</option></select><ChevronDown :size="13"/></label>
+          <div class="page-tools"><div v-if="['overview','activity'].includes(page)" class="date-range-bar">
+            <label class="date-pill"><span>From Date</span><input type="date" v-model="s.fromDate" :max="s.toDate||s.data.now.slice(0,10)" @change="applyDateRange"></label>
+            <label class="date-pill"><span>To Date</span><input type="date" v-model="s.toDate" :min="s.fromDate" :max="s.data.now.slice(0,10)" @change="applyDateRange"></label>
+            <div class="preset-group"><button type="button" class="preset-btn" @click="setQuickRange('today')">Today</button><button type="button" class="preset-btn" @click="setQuickRange('7d')">7D</button><button type="button" class="preset-btn" @click="setQuickRange('month')">Month</button></div>
+          </div>
             <button v-if="['overview','activity','roster'].includes(page)" class="btn" :class="{primary:page!=='roster'}" @click="page==='roster'?download('roster',s.data.now.slice(0,10),'all'):(s.form={type:'export',kind:'missing'})"><ArrowDownToLine :size="16"/>Export<span class="wide-only"> {{page==='roster'?'SA roster':'report'}}</span></button>
             <button v-if="['roster','controllers','groups'].includes(page)" class="primary" @click="s.form={type:({roster:'member',controllers:'controller',groups:'group'})[page]}"><span class="plus">+</span>{{({roster:'Add member',controllers:'Assign controller',groups:'Register group'})[page]}}</button></div>
         </div>

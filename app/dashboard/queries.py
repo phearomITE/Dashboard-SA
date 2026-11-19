@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import String, cast, func, literal, select, union_all
 
@@ -84,46 +84,86 @@ EVENTS = {
 }
 
 
-def analytics(db, days):
+def analytics(db, days: int = 7, *, from_date: date | None = None, to_date: date | None = None):
     today = local_now().date()
-    dates = [today - timedelta(days=i) for i in reversed(range(days))]
+    if from_date or to_date:
+        start_day = from_date or to_date
+        end_day = to_date or from_date
+        if end_day < start_day:
+            start_day, end_day = end_day, start_day
+        span_days = max(1, (end_day - start_day).days + 1)
+        dates = [start_day + timedelta(days=i) for i in range(span_days)]
+    else:
+        span_days = days
+        dates = [today - timedelta(days=i) for i in reversed(range(days))]
     start = datetime.combine(dates[0], time.min)
-    end = datetime.combine(today + timedelta(days=1), time.min)
+    end = datetime.combine(dates[-1] + timedelta(days=1), time.min)
     series = {str(day): dict(date=str(day), reports=0, pins=0, alerts=0) for day in dates}
     previous = {}
     regional = {}
     for key, (model, stamp) in EVENTS.items():
         day = func.date(stamp)
-        for date, n in db.query(day, func.count(model.id)).filter(stamp >= start, stamp < end).group_by(day):
-            series[str(date)][key] = n
-        previous[key] = db.query(model).filter(stamp >= start - timedelta(days=days), stamp < start).count()
+        for d_val, n in db.query(day, func.count(model.id)).filter(stamp >= start, stamp < end).group_by(day):
+            if str(d_val) in series:
+                series[str(d_val)][key] = n
+        previous[key] = db.query(model).filter(stamp >= start - timedelta(days=span_days), stamp < start).count()
         for group, count in db.query(model.group_name, func.count(model.id)).filter(
                 stamp >= start, stamp < end).group_by(model.group_name):
             region = region_from_group(group) or "Unknown"
-            regional.setdefault(region, dict(region=region, reports=0, pins=0, alerts=0, reasons=0))[key] += count
+            regional.setdefault(
+                region,
+                dict(region=region, reports=0, pins=0, alerts=0, reasons=0, written_reasons=0, unwritten_reasons=0),
+            )[key] += count
+    written_alerts = 0
     for group, count in db.query(MissingSalePhotoAlert.group_name, func.count(MissingSalePhotoAlert.id)).filter(
             MissingSalePhotoAlert.missed_at >= start, MissingSalePhotoAlert.missed_at < end,
             MissingSalePhotoAlert.reason_text.isnot(None), MissingSalePhotoAlert.reason_text != ""
     ).group_by(MissingSalePhotoAlert.group_name):
         region = region_from_group(group) or "Unknown"
-        regional.setdefault(region, dict(region=region, reports=0, pins=0, alerts=0, reasons=0))["reasons"] += count
+        reg_row = regional.setdefault(
+            region,
+            dict(region=region, reports=0, pins=0, alerts=0, reasons=0, written_reasons=0, unwritten_reasons=0),
+        )
+        reg_row["reasons"] += count
+        reg_row["written_reasons"] += count
+        written_alerts += count
+    for reg_row in regional.values():
+        reg_row["unwritten_reasons"] = max(0, reg_row["alerts"] - reg_row["written_reasons"])
+    total_alerts = sum(r["alerts"] for r in regional.values())
+    unwritten_alerts = max(0, total_alerts - written_alerts)
     visitors = db.query(func.count(func.distinct(PinHistory.telegram_user_id))).filter(
         func.coalesce(PinHistory.event_at, PinHistory.pinned_at) >= start,
         func.coalesce(PinHistory.event_at, PinHistory.pinned_at) < end).scalar() or 0
-    return dict(series=list(series.values()), previous=previous, regional=sorted(regional.values(), key=lambda r:r["region"]), visitors=visitors)
+    return dict(series=list(series.values()), previous=previous,
+                regional=sorted(regional.values(), key=lambda r: r["region"]),
+                visitors=visitors, written_alerts=written_alerts, unwritten_alerts=unwritten_alerts,
+                from_date=str(dates[0]), to_date=str(dates[-1]))
 
 
-def activity(db, days, kind, page, size):
-    since = datetime.combine(local_now().date() - timedelta(days=days - 1), time.min)
+def activity(db, days: int = 7, kind: str = "all", page: int = 1, size: int = 10,
+             *, from_date: date | None = None, to_date: date | None = None):
+    if from_date or to_date:
+        start_day = from_date or to_date
+        end_day = to_date or from_date
+        if end_day < start_day:
+            start_day, end_day = end_day, start_day
+        since = datetime.combine(start_day, time.min)
+        until = datetime.combine(end_day + timedelta(days=1), time.min)
+    else:
+        since = datetime.combine(local_now().date() - timedelta(days=days - 1), time.min)
+        until = None
     streams = []
     for key, (model, stamp) in EVENTS.items():
         if kind != "all" and key != kind:
             continue
         reason = model.reason_text if key == "alerts" else model.caption if key == "reports" else cast(literal(None), String)
-        streams.append(select(model.id, literal(key).label("kind"), stamp.label("at"),
-                              model.telegram_user_id.label("telegram_id"),
-                              model.name.label("name"), model.group_name, model.group_id,
-                              reason.label("reason")).where(stamp >= since))
+        stmt = select(model.id, literal(key).label("kind"), stamp.label("at"),
+                      model.telegram_user_id.label("telegram_id"),
+                      model.name.label("name"), model.group_name, model.group_id,
+                      reason.label("reason")).where(stamp >= since)
+        if until is not None:
+            stmt = stmt.where(stamp < until)
+        streams.append(stmt)
     stream = union_all(*streams).subquery()
     total = db.scalar(select(func.count()).select_from(stream))
     ordered = select(stream).order_by(stream.c.at.desc(), stream.c.kind, stream.c.id.desc())
@@ -148,12 +188,13 @@ def missing_report(db, from_date, to_date):
     start = datetime.combine(from_date, time.min)
     end = datetime.combine(to_date + timedelta(days=1), time.min)
     roster_rows = (
-        db.query(SAList.telegram_user_id, SAList.group_name, SAList.controller, SAList.dealer, SAList.region, SAList.name, SAList.source_type, SAList.is_active)
+        db.query(SAList.telegram_user_id, SAList.group_name, SAList.controller, SAList.dealer,
+                 SAList.region, SAList.name, SAList.source_type, SAList.is_active, SAList.employee_id)
         .filter(SAList.is_deleted == 0)
         .all()
     )
     roster = {
-        (str(r[0]), normalize_group(r[1])): (r[2], r[3], r[4], r[5])
+        (str(r[0]), normalize_group(r[1])): (r[2], r[3], r[4], r[5], r[8] or "")
         for r in roster_rows if r[0] is not None
     }
     by_uid = {}
@@ -166,7 +207,7 @@ def missing_report(db, from_date, to_date):
     }
     for (uid, gnorm), u in sa_users.items():
         if (uid, gnorm) not in roster:
-            info = ("", u.dealer or "", u.region or region_from_group(u.group_name) or "", u.official_name or u.name or "")
+            info = ("", u.dealer or "", u.region or region_from_group(u.group_name) or "", u.official_name or u.name or "", "")
             roster[(uid, gnorm)] = info
             by_uid.setdefault(uid, []).append((gnorm, info))
     has_official_roster = any(r[6] == "excel" for r in roster_rows)
@@ -184,17 +225,19 @@ def missing_report(db, from_date, to_date):
             if len(matches) == 1:
                 gnorm, member = matches[0]
             else:
-                member = ("", "", "", "")
+                member = ("", "", "", "", "")
         key = (str(uid), gnorm or str(group_id))
         if key not in rows:
             code = group_code_from_name(group_name)
             resolved_region = region or member[2] or (code.split('-')[0] if code else region_from_group(group_name)) or ""
             resolved_dealer = dealer or member[1] or (code.split('-')[1] if code else "")
             assigned = controllers_for_group(group_name) or controllers_for_region(resolved_region)
-            rows[key] = dict(telegram_id=str(uid), name=name or member[3] or "Unknown", group=group_name or str(group_id),
+            rows[key] = dict(telegram_id=str(uid), employee_id=member[4] or "",
+                             name=name or member[3] or "Unknown", group=group_name or str(group_id),
                              region=resolved_region, dealer=resolved_dealer,
                              controller=", ".join(c.name for c in assigned) or member[0] or "Unassigned",
-                             total_visit=0, total_miss=0, reasons=[])
+                             total_visit=0, total_miss=0, written_count=0, unwritten_count=0,
+                             reasons=[], alert_windows=[])
         return rows[key]
 
     stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
@@ -204,12 +247,24 @@ def missing_report(db, from_date, to_date):
         item(pin.telegram_user_id, pin.group_id, pin.group_name, pin.name)["total_visit"] += 1
     for alert in db.query(MissingSalePhotoAlert).filter(MissingSalePhotoAlert.group_id < 0,
                                                         MissingSalePhotoAlert.window_end >= start,
-                                                        MissingSalePhotoAlert.window_end < end):
+                                                        MissingSalePhotoAlert.window_end < end).order_by(MissingSalePhotoAlert.window_start.desc()):
         row = item(alert.telegram_user_id, alert.group_id, alert.group_name,
                    alert.name, alert.region, alert.dealer)
         row["total_miss"] += 1
         reason = (alert.reason_text or "").strip()
-        if reason and reason not in row["reasons"]:
-            row["reasons"].append(reason)
+        if reason:
+            row["written_count"] += 1
+            if reason not in row["reasons"]:
+                row["reasons"].append(reason)
+        else:
+            row["unwritten_count"] += 1
+        if len(row["alert_windows"]) < 50:
+            w_start = alert.window_start.strftime("%Y-%m-%d %H:%M") if alert.window_start else ""
+            w_end = alert.window_end.strftime("%H:%M") if alert.window_end else ""
+            row["alert_windows"].append(dict(
+                window=f"{w_start}-{w_end}" if w_start and w_end else (w_start or ""),
+                reason=reason or "Awaiting reason",
+                written=bool(reason),
+            ))
     return dict(rows=sorted(rows.values(), key=lambda r: (-r["total_miss"], r["name"].casefold())),
                 from_date=from_date, to_date=to_date)
