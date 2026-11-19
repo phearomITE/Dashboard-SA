@@ -98,31 +98,120 @@ def analytics(db, days: int = 7, *, from_date: date | None = None, to_date: date
         dates = [today - timedelta(days=i) for i in reversed(range(days))]
     start = datetime.combine(dates[0], time.min)
     end = datetime.combine(dates[-1] + timedelta(days=1), time.min)
-    series = {str(day): dict(date=str(day), reports=0, pins=0, alerts=0) for day in dates}
+    series = {str(day): dict(date=str(day), reports=0, pins=0, alerts=0, al=0) for day in dates}
     previous = {}
     regional = {}
+
+    roster_by_group = {}
+    roster_by_uid = {}
+    for gname, reg, dlr, tid in (
+        db.query(SAList.group_name, SAList.region, SAList.dealer, SAList.telegram_user_id)
+        .filter(SAList.is_deleted == 0)
+        .all()
+    ):
+        reg_u = (reg or "").strip().upper()
+        dlr_u = (dlr or "").strip().upper()
+        gn = normalize_group(gname)
+        if gn and reg_u:
+            roster_by_group.setdefault(gn, (reg_u, dlr_u))
+        if tid and reg_u:
+            roster_by_uid.setdefault(str(tid), (reg_u, dlr_u))
+
+    def _resolve_reg_dealer(group_name, raw_region=None, raw_dealer=None, uid=None):
+        code = group_code_from_name(group_name)
+        fb = roster_by_group.get(normalize_group(group_name)) or roster_by_uid.get(str(uid or "")) or ("", "")
+        reg = ((raw_region or "").strip().upper()
+               or (code.split("-")[0] if code else "")
+               or region_from_group(group_name)
+               or fb[0]
+               or "Unknown")
+        dlr = ((raw_dealer or "").strip().upper()
+               or (code.split("-", 1)[1] if code and "-" in code else "")
+               or fb[1]
+               or "Unassigned")
+        return reg, dlr
+
+    daily_scope: dict[tuple[str, str, str], dict] = {}
+
+    def _scope_row(d_str: str, reg: str, dlr: str) -> dict:
+        k = (d_str, reg, dlr)
+        row = daily_scope.get(k)
+        if row is None:
+            row = dict(date=d_str, region=reg, dealer=dlr, checkin=0, miss=0, al=0, reports=0)
+            daily_scope[k] = row
+        return row
+
     for key, (model, stamp) in EVENTS.items():
         day = func.date(stamp)
         for d_val, n in db.query(day, func.count(model.id)).filter(stamp >= start, stamp < end).group_by(day):
-            if str(d_val) in series:
-                series[str(d_val)][key] = n
+            d_str = str(d_val)[:10]
+            if d_str in series:
+                series[d_str][key] = n
         previous[key] = db.query(model).filter(stamp >= start - timedelta(days=span_days), stamp < start).count()
         for group, count in db.query(model.group_name, func.count(model.id)).filter(
                 stamp >= start, stamp < end).group_by(model.group_name):
-            region = region_from_group(group) or "Unknown"
+            region, _ = _resolve_reg_dealer(group)
             regional.setdefault(
                 region,
-                dict(region=region, reports=0, pins=0, alerts=0, reasons=0, written_reasons=0, unwritten_reasons=0),
+                dict(region=region, reports=0, pins=0, alerts=0, al=0, reasons=0, written_reasons=0, unwritten_reasons=0),
             )[key] += count
+
+    pin_stamp = func.coalesce(PinHistory.event_at, PinHistory.pinned_at)
+    for d_val, gname, raw_reg, raw_dlr, n in (
+        db.query(func.date(pin_stamp), PinHistory.group_name, PinHistory.region, PinHistory.dealer, func.count(PinHistory.id))
+        .filter(PinHistory.group_id < 0, pin_stamp >= start, pin_stamp < end)
+        .group_by(func.date(pin_stamp), PinHistory.group_name, PinHistory.region, PinHistory.dealer)
+    ):
+        reg, dlr = _resolve_reg_dealer(gname, raw_reg, raw_dlr)
+        _scope_row(str(d_val)[:10], reg, dlr)["checkin"] += n
+
+    for d_val, gname, n in (
+        db.query(func.date(SalePhotoReport.submitted_at), SalePhotoReport.group_name, func.count(SalePhotoReport.id))
+        .filter(SalePhotoReport.group_id < 0, SalePhotoReport.submitted_at >= start, SalePhotoReport.submitted_at < end)
+        .group_by(func.date(SalePhotoReport.submitted_at), SalePhotoReport.group_name)
+    ):
+        reg, dlr = _resolve_reg_dealer(gname)
+        _scope_row(str(d_val)[:10], reg, dlr)["reports"] += n
+
+    for d_val, gname, raw_reg, raw_dlr, n in (
+        db.query(func.date(MissingSalePhotoAlert.missed_at), MissingSalePhotoAlert.group_name,
+                 MissingSalePhotoAlert.region, MissingSalePhotoAlert.dealer, func.count(MissingSalePhotoAlert.id))
+        .filter(MissingSalePhotoAlert.group_id < 0,
+                MissingSalePhotoAlert.missed_at >= start, MissingSalePhotoAlert.missed_at < end)
+        .group_by(func.date(MissingSalePhotoAlert.missed_at), MissingSalePhotoAlert.group_name,
+                  MissingSalePhotoAlert.region, MissingSalePhotoAlert.dealer)
+    ):
+        reg, dlr = _resolve_reg_dealer(gname, raw_reg, raw_dlr)
+        _scope_row(str(d_val)[:10], reg, dlr)["miss"] += n
+
+    for u in db.query(SAUser).filter(
+        SAUser.is_from_list == 1,
+        SAUser.alert_paused_until.isnot(None),
+        SAUser.alert_paused_until >= start,
+    ).all():
+        reg, dlr = _resolve_reg_dealer(u.group_name, u.region, u.dealer, u.telegram_user_id)
+        for d in dates:
+            d_start = datetime.combine(d, time.min)
+            d_end = d_start + timedelta(days=1)
+            if u.alert_paused_until >= d_start and (u.alert_pause_start is None or u.alert_pause_start < d_end):
+                d_str = str(d)
+                if d_str in series:
+                    series[d_str]["al"] += 1
+                regional.setdefault(
+                    reg,
+                    dict(region=reg, reports=0, pins=0, alerts=0, al=0, reasons=0, written_reasons=0, unwritten_reasons=0),
+                )["al"] += 1
+                _scope_row(d_str, reg, dlr)["al"] += 1
+
     written_alerts = 0
     for group, count in db.query(MissingSalePhotoAlert.group_name, func.count(MissingSalePhotoAlert.id)).filter(
             MissingSalePhotoAlert.missed_at >= start, MissingSalePhotoAlert.missed_at < end,
             MissingSalePhotoAlert.reason_text.isnot(None), MissingSalePhotoAlert.reason_text != ""
     ).group_by(MissingSalePhotoAlert.group_name):
-        region = region_from_group(group) or "Unknown"
+        region, _ = _resolve_reg_dealer(group)
         reg_row = regional.setdefault(
             region,
-            dict(region=region, reports=0, pins=0, alerts=0, reasons=0, written_reasons=0, unwritten_reasons=0),
+            dict(region=region, reports=0, pins=0, alerts=0, al=0, reasons=0, written_reasons=0, unwritten_reasons=0),
         )
         reg_row["reasons"] += count
         reg_row["written_reasons"] += count
@@ -136,6 +225,7 @@ def analytics(db, days: int = 7, *, from_date: date | None = None, to_date: date
         func.coalesce(PinHistory.event_at, PinHistory.pinned_at) < end).scalar() or 0
     return dict(series=list(series.values()), previous=previous,
                 regional=sorted(regional.values(), key=lambda r: r["region"]),
+                daily_scope=sorted(daily_scope.values(), key=lambda x: (x["date"], x["region"], x["dealer"])),
                 visitors=visitors, written_alerts=written_alerts, unwritten_alerts=unwritten_alerts,
                 from_date=str(dates[0]), to_date=str(dates[-1]))
 

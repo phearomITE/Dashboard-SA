@@ -1,79 +1,158 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BellRing, CheckCircle2, ChevronLeft, ChevronRight,
-  ClipboardCheck, Download, FileText, Layers3, MapPin, MessageSquareWarning, Minus, Search, SearchX, Users, Waypoints } from 'lucide-vue-next'
-import { dateLabel, eventNames, formatDMY, initials, num, useWorkspace } from './workspace'
+import { computed, reactive, ref, watch } from 'vue'
+import { Activity, BellRing, CalendarDays, ChevronLeft, ChevronRight,
+  Download, FileText, ListChecks, MapPin, PieChart, Search, SearchX } from 'lucide-vue-next'
+import { dateLabel, eventNames, formatDMY, num, useWorkspace } from './workspace'
 import TrendChart from './TrendChart.vue'
 import ProfileAvatar from './ProfileAvatar.vue'
 defineProps({activityOnly:Boolean})
-const emit=defineEmits(['navigate'])
 const {s,refresh}=useWorkspace()
-const totals=computed(()=>Object.fromEntries(['reports','pins','alerts'].map(k=>[k,(s.metrics?.series||[]).reduce((a,v)=>a+v[k],0)])))
-const regions=computed(()=>{
-  const counts=new Map()
-  for(const r of (s.data?.roster||[])) if(r.enabled) counts.set(r.region,(counts.get(r.region)||0)+1)
-  return [...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))
+
+const pieColors=['#0353a4','#127e72','#d96b43','#6366f1','#e0a265','#2c8c99','#8b5cf6','#64748b']
+const periods=[['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']]
+const trendPeriod=ref('daily'), trendRegion=ref(''), trendDealer=ref('')
+
+const panels=reactive({
+  checkin:{period:'daily',groupBy:'region',region:'',dealer:''},
+  miss:{period:'daily',groupBy:'region',region:'',dealer:''},
+  al:{period:'daily',groupBy:'region',region:'',dealer:''},
 })
-const active=computed(()=>regions.value.reduce((n,r)=>n+r[1],0))
-const complianceRate=computed(()=>{
-  const denom=totals.value.pins+totals.value.alerts
-  return denom?Math.round((totals.value.pins/denom)*100):100
+
+const scopeRows=computed(()=>s.metrics?.daily_scope||[])
+const allRegions=computed(()=>{
+  const regs=new Set([
+    ...(s.data?.roster||[]).map(r=>r.region),
+    ...scopeRows.value.map(r=>r.region),
+  ].filter(Boolean))
+  return [...regs].sort()
 })
-const writtenTotal=computed(()=>s.metrics?.written_alerts??(s.overviewRows||[]).reduce((a,r)=>a+(r.written_count??r.reasons?.length??0),0))
-const notWrittenTotal=computed(()=>s.metrics?.unwritten_alerts??(s.overviewRows||[]).reduce((a,r)=>a+(r.unwritten_count??Math.max(0,(r.total_miss||0)-(r.reasons?.length||0))),0))
-const reasonRate=computed(()=>{
-  const denom=writtenTotal.value+notWrittenTotal.value
-  return denom?Math.round((writtenTotal.value/denom)*100):100
+function dealersFor(reg){
+  const dlrs=new Set()
+  for(const r of (s.data?.roster||[])) if((!reg||r.region===reg)&&r.dealer) dlrs.add(r.dealer)
+  for(const r of scopeRows.value) if((!reg||r.region===reg)&&r.dealer&&r.dealer!=='Unassigned') dlrs.add(r.dealer)
+  return [...dlrs].sort()
+}
+const trendDealers=computed(()=>dealersFor(trendRegion.value))
+watch(trendRegion,()=>{if(trendDealer.value&&!trendDealers.value.includes(trendDealer.value))trendDealer.value=''})
+
+function bucketKey(dateStr,period){
+  if(!dateStr)return ''
+  if(period==='monthly')return dateStr.slice(0,7)
+  if(period==='weekly'){
+    const d=new Date(dateStr+'T12:00:00')
+    if(Number.isNaN(d.getTime()))return dateStr
+    const dow=(d.getDay()+6)%7
+    d.setDate(d.getDate()-dow)
+    return d.toISOString().slice(0,10)
+  }
+  return dateStr
+}
+function bucketLabel(key,period){
+  if(!key)return ''
+  if(period==='monthly')return dateLabel(key+'-01',{month:'short',year:'numeric'})
+  if(period==='weekly')return 'Wk '+dateLabel(key,{month:'short',day:'numeric'})
+  return dateLabel(key,{month:'short',day:'numeric'})
+}
+
+const trendSeries=computed(()=>{
+  const baseSeries=s.metrics?.series||[]
+  const buckets=new Map()
+  for(const d of baseSeries){
+    const key=bucketKey(d.date,trendPeriod.value)
+    if(key&&!buckets.has(key))buckets.set(key,{date:key,label:bucketLabel(key,trendPeriod.value),pins:0,alerts:0,al:0,reports:0})
+  }
+  const hasFilter=Boolean(trendRegion.value||trendDealer.value)
+  if(!hasFilter&&!scopeRows.value.length){
+    for(const d of baseSeries){
+      const key=bucketKey(d.date,trendPeriod.value)
+      const b=buckets.get(key)
+      if(!b)continue
+      b.pins+=d.pins||0; b.alerts+=d.alerts||0; b.al+=d.al||0; b.reports+=d.reports||0
+    }
+  }else if(!hasFilter){
+    for(const d of baseSeries){
+      const key=bucketKey(d.date,trendPeriod.value)
+      const b=buckets.get(key)
+      if(!b)continue
+      b.pins+=d.pins||0; b.alerts+=d.alerts||0; b.al+=d.al||0; b.reports+=d.reports||0
+    }
+  }else{
+    for(const row of scopeRows.value){
+      if(trendRegion.value&&row.region!==trendRegion.value)continue
+      if(trendDealer.value&&row.dealer!==trendDealer.value)continue
+      const key=bucketKey(row.date,trendPeriod.value)
+      let b=buckets.get(key)
+      if(!b){b={date:key,label:bucketLabel(key,trendPeriod.value),pins:0,alerts:0,al:0,reports:0};buckets.set(key,b)}
+      b.pins+=row.checkin||0; b.alerts+=row.miss||0; b.al+=row.al||0; b.reports+=row.reports||0
+    }
+  }
+  return [...buckets.values()].sort((a,b)=>a.date.localeCompare(b.date))
 })
-const cards=computed(()=>[
-  {label:'Roster members',value:active.value,icon:Users,color:'teal',page:'roster'},
-  {label:'Sale reports',key:'reports',value:totals.value.reports,icon:ClipboardCheck,color:'blue'},
-  {label:'Location pins (Visit)',key:'pins',value:totals.value.pins,icon:MapPin,color:'violet'},
-  {label:'Missing alerts',key:'alerts',value:totals.value.alerts,icon:BellRing,color:'amber'},
-  {label:'Compliance rate',kind:'compliance',value:complianceRate.value+'%',icon:CheckCircle2,color:'teal'},
-  {label:'Written vs Not Written',kind:'reasons',value:num(writtenTotal.value)+' / '+num(notWrittenTotal.value),icon:MessageSquareWarning,color:'amber',page:'missing-report'},
+
+const trendLines=[
+  {key:'pins',label:'Check In',color:'#0353a4',fill:true},
+  {key:'alerts',label:'Miss Report',color:'#d96b43'},
+  {key:'al',label:'Annual Leave (AL)',color:'#6366f1',dashed:true},
+]
+
+const mixPie=computed(()=>{
+  const sums=trendSeries.value.reduce((a,b)=>({checkin:a.checkin+b.pins,miss:a.miss+b.alerts,al:a.al+b.al}),{checkin:0,miss:0,al:0})
+  const items=[
+    {label:'Check In',value:sums.checkin,color:'#0353a4'},
+    {label:'Miss Report',value:sums.miss,color:'#d96b43'},
+    {label:'Annual Leave (AL)',value:sums.al,color:'#6366f1'},
+  ].filter(x=>x.value>0)
+  const total=items.reduce((n,x)=>n+x.value,0)
+  let offset=0
+  const slices=items.map(x=>{
+    const pct=total?(x.value/total)*100:0
+    const slice={...x,from:offset,pct,pctLabel:Math.round(pct*10)/10}
+    offset+=pct
+    return slice
+  })
+  return {total,slices,sums}
+})
+
+function buildPerformance(metricKey){
+  const cfg=panels[metricKey]
+  const byScope=new Map()
+  const byBucketScope=new Map()
+  let total=0
+  for(const row of scopeRows.value){
+    if(cfg.region&&row.region!==cfg.region)continue
+    if(cfg.dealer&&row.dealer!==cfg.dealer)continue
+    const val=Number(row[metricKey]||0)
+    if(!val)continue
+    total+=val
+    const scopeName=cfg.groupBy==='dealer'?(row.dealer?`${row.dealer} (${row.region})`:row.region):(row.region||'Unknown')
+    byScope.set(scopeName,(byScope.get(scopeName)||0)+val)
+    const bKey=bucketKey(row.date,cfg.period)
+    const bsKey=bKey+'|'+scopeName
+    if(!byBucketScope.has(bsKey))byBucketScope.set(bsKey,{bucket:bKey,label:bucketLabel(bKey,cfg.period),scope:scopeName,value:0})
+    byBucketScope.get(bsKey).value+=val
+  }
+  const sortedScopes=[...byScope.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))
+  const top=sortedScopes.slice(0,7)
+  const otherVal=sortedScopes.slice(7).reduce((n,[,v])=>n+v,0)
+  if(otherVal>0)top.push(['Other',otherVal])
+  let offset=0
+  const slices=top.map(([label,value],i)=>{
+    const pct=total?(value/total)*100:0
+    const slice={label,value,from:offset,pct,pctLabel:Math.round(pct*10)/10,color:pieColors[i%pieColors.length]}
+    offset+=pct
+    return slice
+  })
+  const table=[...byBucketScope.values()]
+    .sort((a,b)=>b.bucket.localeCompare(a.bucket)||b.value-a.value||a.scope.localeCompare(b.scope))
+    .map(r=>({...r,share:total?Math.round((r.value/total)*1000)/10:0}))
+  return {total,slices,table}
+}
+
+const perfSections=computed(()=>[
+  {key:'checkin',title:'Performance Check In',subtitle:'Location check-ins by Region & Dealer',valueLabel:'Check In',icon:MapPin,color:'#0353a4',data:buildPerformance('checkin')},
+  {key:'miss',title:'Performance Miss Report',subtitle:'Missing report alerts by Region & Dealer',valueLabel:'Miss Report',icon:BellRing,color:'#d96b43',data:buildPerformance('miss')},
+  {key:'al',title:'Performance AL',subtitle:'Annual Leave by Region & Dealer',valueLabel:'Total AL',icon:CalendarDays,color:'#6366f1',data:buildPerformance('al')},
 ])
-function change(k){const prev=s.metrics?.previous?.[k];return prev?Math.round((totals.value[k]-prev)*100/prev):null}
-const icons={reports:FileText,pins:MapPin,alerts:BellRing}
-const colors=['#197c70','#44988c','#74afa0','#a7c9b5','#d8ad7c','#b3bbd1','#c1cfd0','#d4dcd9']
-const donut=computed(()=>{
-  let sum=0
-  const denom=Math.max(1,active.value)
-  return regions.value.map(([label,value],i)=>{
-    const from=sum;const part=value/denom*100;sum+=part
-    return {label,value,from,part,color:colors[i%colors.length]}
-  })
-})
-const regionalAnalysis=computed(()=>{
-  const saByReg=new Map(regions.value)
-  return (s.metrics?.regional||[]).map(r=>{
-    const total=r.pins+r.alerts
-    const compliance=total?Math.round((r.pins/total)*100):100
-    const written=r.written_reasons??r.reasons??0
-    const notWritten=r.unwritten_reasons??Math.max(0,r.alerts-written)
-    return {...r,sa:saByReg.get(r.region)||0,written,notWritten,compliance}
-  })
-})
-const controllerAnalysis=computed(()=>{
-  const byCtrl=new Map()
-  const saCounts=new Map()
-  for(const m of (s.data?.roster||[])){
-    if(!m.enabled||!m.controller)continue
-    saCounts.set(m.controller,(saCounts.get(m.controller)||0)+1)
-  }
-  for(const r of (s.overviewRows||[])){
-    const key=r.controller||'Unassigned'
-    if(!byCtrl.has(key))byCtrl.set(key,{controller:key,sas:saCounts.get(key)||0,visit:0,miss:0,awaiting:0})
-    const item=byCtrl.get(key)
-    item.visit+=r.total_visit||0
-    item.miss+=r.total_miss||0
-    item.awaiting+=r.unwritten_count??Math.max(0,(r.total_miss||0)-(r.reasons?.length||0))
-  }
-  return [...byCtrl.values()].map(c=>{
-    const denom=c.visit+c.miss
-    return {...c,compliance:denom?Math.round((c.visit/denom)*100):100}
-  }).sort((a,b)=>b.miss-a.miss||b.visit-a.visit)
-})
 
 const regFilter=ref(''),dealerFilter=ref(''),saSearch=ref(''),summaryPage=ref(1)
 const summaryRegions=computed(()=>[...new Set((s.overviewRows||[]).map(r=>r.region).filter(Boolean))].sort())
@@ -95,49 +174,100 @@ function exportOverviewCsv(){
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
   a.href=url;a.download=`overview-sa-summary-${s.fromDate}-to-${s.toDate}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
 }
+const icons={reports:FileText,pins:MapPin,alerts:BellRing}
 async function filter(k){s.kind=k;s.page=1;await refresh()}
 async function turn(n){s.page=n;await refresh()}
-function openMetric(card){
-  if(card.page){emit('navigate',card.page);return}
-  if(card.key)emit('navigate','activity/'+card.key)
-}
 </script>
 <template>
   <template v-if="!activityOnly">
-    <div class="metrics-grid"><button v-for="c in cards" :key="c.label" class="metric" @click="openMetric(c)">
-      <span class="metric-top"><span class="icon-tile" :class="c.color"><component :is="c.icon" :size="19"/></span><ArrowUpRight v-if="c.page||c.key" class="metric-arrow" :size="15"/></span>
-      <span class="metric-label">{{c.label}}</span><strong class="metric-value">{{typeof c.value==='number'?num(c.value):c.value}}</strong>
-      <span v-if="c.kind==='compliance'" class="metric-note"><i class="status-dot"></i>{{num(s.metrics?.visitors||0)}} active SAs checking in</span>
-      <span v-else-if="c.kind==='reasons'" class="metric-note">{{reasonRate}}% reason resolution · click for Miss Report</span>
-      <span v-else-if="!c.key" class="metric-note"><i class="status-dot"></i>Across {{regions.length}} regions</span>
-      <span v-else class="metric-note"><template v-if="change(c.key)!==null"><b class="delta" :class="{negative:(c.key==='alerts'?change(c.key)>0:change(c.key)<0)}">
-        <component :is="change(c.key)>0?ArrowUpRight:change(c.key)<0?ArrowDownRight:Minus" :size="11"/>{{Math.abs(change(c.key))}}%</b>vs. previous period</template><template v-else>Previous period · {{num(s.metrics?.previous?.[c.key])}}</template></span>
-    </button></div>
-    <div class="analytics-grid">
-      <section class="panel trend"><div class="panel-head"><div><h2>Reporting activity</h2><p>Daily reports and location pins ({{formatDMY(s.fromDate)}} – {{formatDMY(s.toDate)}})</p></div><span class="panel-glyph"><Activity :size="18"/></span></div>
-        <div class="chart-legend"><span><i></i>Sale reports</span><span><i class="pins-line"></i>Location pins</span></div>
-        <TrendChart :series="s.metrics.series"/></section>
-      <section class="panel coverage"><div class="panel-head"><div><h2>Regional coverage</h2><p>Enabled members by region</p></div><Waypoints :size="18" class="quiet"/></div>
-        <div class="coverage-body"><div class="ring-wrap"><svg viewBox="0 0 160 160" role="img" aria-label="Enabled roster members by region">
-          <circle cx="80" cy="80" r="64" fill="none" stroke="#edf3f1" stroke-width="19"/>
-          <circle v-for="a in donut" :key="a.label" cx="80" cy="80" r="64" fill="none" :stroke="a.color" stroke-width="19" pathLength="100" :stroke-dasharray="Math.max(.05,a.part-.85)+' '+(100-Math.max(.05,a.part-.85))" :stroke-dashoffset="-a.from" transform="rotate(-90 80 80)"><title>{{a.label}} · {{a.value}} members</title></circle></svg>
-          <div><strong>{{num(active)}}</strong><small>members</small></div></div>
-          <div class="region-legend"><div v-for="a in donut" :key="a.label"><i :style="{background:a.color}"></i><span>{{a.label}}</span><b>{{a.value}}</b></div><p v-if="!donut.length">No enabled members</p></div>
-        </div><a class="panel-footer" href="#roster">View SA roster <ArrowRight :size="14"/></a>
+    <section class="panel analyst-toolbar">
+      <div class="analyst-title"><ListChecks :size="18"/><div><h2>Performance Analyst</h2><p>{{formatDMY(s.fromDate)}} – {{formatDMY(s.toDate)}} · Check In, Miss Report &amp; Annual Leave</p></div></div>
+      <div class="analyst-controls">
+        <select v-model="trendRegion" class="control small-control" aria-label="Filter analyst by region"><option value="">All regions</option><option v-for="r in allRegions" :key="r">{{r}}</option></select>
+        <select v-model="trendDealer" class="control small-control" aria-label="Filter analyst by dealer"><option value="">All dealers</option><option v-for="d in trendDealers" :key="d">{{d}}</option></select>
+        <div class="period-tabs" role="group" aria-label="Trend period">
+          <button v-for="[k,label] in periods" :key="k" type="button" :class="{active:trendPeriod===k}" @click="trendPeriod=k">{{label}}</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="analyst-top-grid">
+      <section class="panel trend">
+        <div class="panel-head">
+          <div><h2>Activity Trend ({{periods.find(p=>p[0]===trendPeriod)?.[1]}})</h2><p>Check In, Miss Report &amp; AL line chart</p></div>
+          <div class="period-tabs" role="group" aria-label="Line chart period">
+            <button v-for="[k,label] in periods" :key="k" type="button" :class="{active:trendPeriod===k}" @click="trendPeriod=k">{{label}}</button>
+          </div>
+        </div>
+        <div class="chart-legend">
+          <span v-for="l in trendLines" :key="l.key"><i :style="{borderTopColor:l.color,borderTopStyle:l.dashed?'dashed':'solid',borderTopWidth:'3px'}"></i>{{l.label}}</span>
+        </div>
+        <TrendChart :series="trendSeries" :lines="trendLines"/>
+      </section>
+
+      <section class="panel coverage">
+        <div class="panel-head"><div><h2>Overall Mix · Pie Chart</h2><p>Share of Check In, Miss Report &amp; AL</p></div><PieChart :size="18" class="quiet"/></div>
+        <div class="pie-body">
+          <svg viewBox="0 0 180 180" class="pie-svg" role="img" aria-label="Activity share pie chart">
+            <circle cx="90" cy="90" r="80" fill="#eef3f1"/>
+            <circle v-for="sl in mixPie.slices" :key="sl.label" cx="90" cy="90" r="40" fill="none" :stroke="sl.color" stroke-width="80" pathLength="100"
+              :stroke-dasharray="Math.max(0.2,sl.pct)+' '+(100-Math.max(0.2,sl.pct))" :stroke-dashoffset="-sl.from" transform="rotate(-90 90 90)">
+              <title>{{sl.label}}: {{num(sl.value)}} ({{sl.pctLabel}}%)</title>
+            </circle>
+          </svg>
+          <div class="pie-legend">
+            <div v-for="sl in mixPie.slices" :key="sl.label" class="pie-legend-row"><i :style="{background:sl.color}"></i><span>{{sl.label}}</span><b>{{num(sl.value)}} ({{sl.pctLabel}}%)</b></div>
+            <p v-if="!mixPie.slices.length" class="quiet" style="font-size:12px">No records in selected dates</p>
+          </div>
+        </div>
       </section>
     </div>
-    <div class="analysis-grid">
-      <section class="panel"><div class="panel-head"><div><h2>Regional performance analysis</h2><p>Visits, alerts, reason completion &amp; compliance by region</p></div><span class="panel-glyph"><Layers3 :size="17"/></span></div>
-        <div class="table-scroll" style="margin-top:12px"><table><thead><tr><th>Region</th><th>Active SA</th><th>Total Visit</th><th>Reports</th><th>Total Miss</th><th>Written</th><th>Not Written</th><th>Compliance</th></tr></thead>
-          <tbody><tr v-for="r in regionalAnalysis" :key="r.region"><td><strong>{{r.region}}</strong></td><td>{{num(r.sa)}}</td><td>{{num(r.pins)}}</td><td>{{num(r.reports)}}</td><td><b :class="r.alerts?'miss-count':''">{{num(r.alerts)}}</b></td><td>{{num(r.written)}}</td><td>{{num(r.notWritten)}}</td>
-            <td><div class="compliance-cell"><span class="compliance-track"><i :style="{width:r.compliance+'%'}"></i></span><b>{{r.compliance}}%</b></div></td></tr>
-            <tr v-if="!regionalAnalysis.length"><td colspan="8" class="empty">No regional metrics in selected dates.</td></tr></tbody></table></div></section>
-      <section class="panel"><div class="panel-head"><div><h2>Controller team analysis</h2><p>Controller performance across selected date range</p></div><a class="outline-link" href="#missing-report">Miss Report <ArrowRight :size="14"/></a></div>
-        <div class="table-scroll" style="margin-top:12px"><table><thead><tr><th>Controller</th><th>SAs</th><th>Total Visit</th><th>Total Miss</th><th>Awaiting</th><th>Compliance</th></tr></thead>
-          <tbody><tr v-for="c in controllerAnalysis" :key="c.controller"><td><strong>{{c.controller}}</strong></td><td>{{num(c.sas)}}</td><td>{{num(c.visit)}}</td><td><b :class="c.miss?'miss-count':''">{{num(c.miss)}}</b></td><td>{{num(c.awaiting)}}</td>
-            <td><div class="compliance-cell"><span class="compliance-track"><i :style="{width:c.compliance+'%'}"></i></span><b>{{c.compliance}}%</b></div></td></tr>
-            <tr v-if="!controllerAnalysis.length"><td colspan="6" class="empty">No controller metrics in selected dates.</td></tr></tbody></table></div></section>
+
+    <div class="perf-cards-grid">
+      <section v-for="sec in perfSections" :key="sec.key" class="panel perf-card">
+        <div class="panel-head perf-head">
+          <div><h2>{{sec.title}}</h2><p>{{sec.subtitle}}</p></div>
+          <strong class="perf-total" :style="{color:sec.color}">{{num(sec.data.total)}}</strong>
+        </div>
+        <div class="perf-toolbar">
+          <div class="period-tabs small" role="group" :aria-label="sec.title+' period'">
+            <button v-for="[k,label] in periods" :key="k" type="button" :class="{active:panels[sec.key].period===k}" @click="panels[sec.key].period=k">{{label}}</button>
+          </div>
+          <div class="scope-tabs" role="group" :aria-label="sec.title+' grouping'">
+            <button type="button" :class="{active:panels[sec.key].groupBy==='region'}" @click="panels[sec.key].groupBy='region'">Region</button>
+            <button type="button" :class="{active:panels[sec.key].groupBy==='dealer'}" @click="panels[sec.key].groupBy='dealer'">Dealer</button>
+          </div>
+          <select v-model="panels[sec.key].region" class="control small-control" :aria-label="sec.title+' region'" @change="panels[sec.key].dealer=''">
+            <option value="">All regions</option><option v-for="r in allRegions" :key="r">{{r}}</option>
+          </select>
+          <select v-model="panels[sec.key].dealer" class="control small-control" :aria-label="sec.title+' dealer'">
+            <option value="">All dealers</option><option v-for="d in dealersFor(panels[sec.key].region)" :key="d">{{d}}</option>
+          </select>
+        </div>
+        <div class="pie-body compact">
+          <svg viewBox="0 0 180 180" class="pie-svg small" role="img" :aria-label="sec.title+' pie chart'">
+            <circle cx="90" cy="90" r="80" fill="#eef3f1"/>
+            <circle v-for="sl in sec.data.slices" :key="sl.label" cx="90" cy="90" r="40" fill="none" :stroke="sl.color" stroke-width="80" pathLength="100"
+              :stroke-dasharray="Math.max(0.2,sl.pct)+' '+(100-Math.max(0.2,sl.pct))" :stroke-dashoffset="-sl.from" transform="rotate(-90 90 90)">
+              <title>{{sl.label}}: {{num(sl.value)}} ({{sl.pctLabel}}%)</title>
+            </circle>
+          </svg>
+          <div class="pie-legend">
+            <div v-for="sl in sec.data.slices" :key="sl.label" class="pie-legend-row"><i :style="{background:sl.color}"></i><span>{{sl.label}}</span><b>{{num(sl.value)}} ({{sl.pctLabel}}%)</b></div>
+            <p v-if="!sec.data.slices.length" class="quiet" style="font-size:12px">No {{sec.valueLabel.toLowerCase()}} data</p>
+          </div>
+        </div>
+        <div class="perf-table-scroll"><table><thead><tr><th>Period</th><th>{{panels[sec.key].groupBy==='dealer'?'Dealer':'Region'}}</th><th>{{sec.valueLabel}}</th><th>Share</th></tr></thead>
+          <tbody>
+            <tr v-for="(r,i) in sec.data.table.slice(0,25)" :key="r.bucket+'-'+r.scope+'-'+i">
+              <td>{{r.label}}</td><td><strong>{{r.scope}}</strong></td><td><b>{{num(r.value)}}</b></td><td>{{r.share}}%</td>
+            </tr>
+            <tr v-if="!sec.data.table.length"><td colspan="4" class="quiet" style="text-align:center;padding:18px">No matching records</td></tr>
+          </tbody>
+        </table></div>
+      </section>
     </div>
+
     <section class="panel activity-panel">
       <div class="panel-head overview-summary-head">
         <div><h2>Recent activity · SA Visit &amp; Miss Summary</h2><p>Date from {{formatDMY(s.fromDate)}} to date {{formatDMY(s.toDate)}}</p></div>
@@ -146,7 +276,7 @@ function openMetric(card){
           <select v-model="dealerFilter" class="control small-control" aria-label="Filter summary by dealer"><option value="">All dealers</option><option v-for="d in summaryDealers" :key="d">{{d}}</option></select>
           <label class="search-box small-search"><Search :size="14"/><input v-model="saSearch" aria-label="Search SA summary" placeholder="Search SA name, ID..."></label>
           <button type="button" class="btn small-btn" @click="exportOverviewCsv"><Download :size="14"/>Export CSV</button>
-          <a class="outline-link" href="#activity">Event stream <ArrowRight :size="14"/></a>
+          <a class="outline-link" href="#activity">Event stream →</a>
         </div>
       </div>
       <div class="table-scroll"><table><thead><tr><th>SA Name</th><th>Telegram ID</th><th>Region / Dealer</th><th>Controller</th><th>Total Visit</th><th>Total Miss</th></tr></thead><tbody>
