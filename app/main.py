@@ -1,6 +1,7 @@
 # app/main.py
 
 from datetime import datetime, timedelta
+import time
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -9,6 +10,7 @@ from apscheduler.triggers.date import DateTrigger
 import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from sqlalchemy.exc import OperationalError
 from telegram import Update
 from telegram.error import Conflict, NetworkError
 from telegram.ext import (
@@ -60,6 +62,7 @@ from app.dashboard.runtime import dashboard_command, start_dashboard, stop_dashb
 from app.database.database import (
     SessionLocal,
     acquire_runtime_lock,
+    engine,
     init_db,
     release_runtime_lock,
 )
@@ -183,7 +186,7 @@ def create_bot() -> Application:
         .token(settings.TELEGRAM_BOT_TOKEN)
         .request(bot_request)
         .get_updates_request(polling_request)
-        .concurrent_updates(16)
+        .concurrent_updates(max(1, settings.BOT_CONCURRENT_UPDATES))
         .post_init(start_dashboard)
         .post_shutdown(stop_dashboard)
         .build()
@@ -328,6 +331,32 @@ def start_scheduler(app: Application) -> AsyncIOScheduler:
     return scheduler
 
 
+def _is_transient_connection_slot_error(exc: OperationalError) -> bool:
+    """Return True when PostgreSQL rejects startup because connection slots are full."""
+    message = str(exc).lower()
+    return "remaining connection slots" in message or "too many clients" in message
+
+
+def _init_db_with_retry(max_attempts: int = 5, delay_seconds: float = 3.0) -> None:
+    """Retry schema initialization briefly if PostgreSQL connection slots are temporarily full."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            init_db()
+            add_missing_columns()
+            return
+        except OperationalError as exc:
+            if attempt >= max_attempts or not _is_transient_connection_slot_error(exc):
+                raise
+            logger.warning(
+                "PostgreSQL connection slots full during startup (attempt %s/%s); retrying in %ss...",
+                attempt,
+                max_attempts,
+                delay_seconds,
+            )
+            engine.dispose()
+            time.sleep(delay_seconds)
+
+
 def main() -> None:
     setup_logger()
     from app.core.telemetry import configure_telemetry
@@ -339,8 +368,7 @@ def main() -> None:
         )
     scheduler = None
     try:
-        init_db()
-        add_missing_columns()
+        _init_db_with_retry()
 
         db = SessionLocal()
         try:
@@ -397,7 +425,10 @@ def main() -> None:
                 logger.info("Scheduler shutdown complete")
             except Exception:
                 logger.exception("Scheduler shutdown failed")
-        release_runtime_lock()
+        try:
+            release_runtime_lock()
+        finally:
+            engine.dispose()
         logger.info("Database runtime lock released; bot shutdown complete")
 
 

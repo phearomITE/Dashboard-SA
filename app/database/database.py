@@ -19,10 +19,10 @@ _connect_args = (
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=15,
-    max_overflow=25,
-    pool_recycle=180,
-    pool_timeout=20,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_recycle=settings.DB_POOL_RECYCLE,
+    pool_timeout=settings.DB_POOL_TIMEOUT,
     connect_args=_connect_args,
     echo=False,
 )
