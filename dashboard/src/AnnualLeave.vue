@@ -54,7 +54,7 @@ function setLeave(row,period='day'){s.form={type:'leave',row,period}}
       <tbody><tr v-for="row in rows" :key="row.id"><td><div class="person"><ProfileAvatar :telegram-id="row.telegram_id" :name="row.name"/><span><strong>{{row.name}}</strong><small>{{row.position}} · {{row.dealer}}</small></span></div></td>
         <td>{{row.telegram_id||'—'}}</td><td>{{row.group}}</td><td>{{row.controller||'—'}}</td><td>{{leaveState(row)==='none'?'—':leaveType(row)}}</td><td>{{leaveState(row)==='none'?'—':leaveDates(row)}}</td>
         <td><span class="badge" :class="leaveState(row)==='active'?'amber':leaveState(row)==='scheduled'?'teal':'gray'"><i/>{{leaveState(row)==='active'?'On leave':leaveState(row)==='scheduled'?'Scheduled':'No leave'}}</span></td>
-        <td><div class="row-actions"><button class="btn" :disabled="!row.bound||!row.enabled" @click="setLeave(row)"><CalendarDays :size="14"/>{{leaveState(row)==='none'?'Set AL':'Edit AL'}}</button>
+        <td><div class="row-actions"><button class="btn" :disabled="!row.enabled" @click="setLeave(row)"><CalendarDays :size="14"/>{{leaveState(row)==='none'?'Set AL':'Edit AL'}}</button>
           <button v-if="leaveState(row)!=='none'" class="btn" @click="setLeave(row,'off')">Cancel AL</button></div></td></tr></tbody></table></div>
     <div v-if="!rows.length" class="empty"><CalendarDays/><strong>No matching SA</strong><p>Change the group, status, or search filter.</p></div>
   </section>

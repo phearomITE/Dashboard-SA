@@ -264,7 +264,8 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         .order_by(SalePhotoReport.submitted_at.asc(), SalePhotoReport.id.asc())
         .all()
     )
-    seen_album_skus: dict[tuple, set[str]] = defaultdict(set)
+    from app.services.outlet_form import report_details
+    seen_outlet_skus: dict[tuple, set[str]] = defaultdict(set)
     for rep in reports:
         skus = extract_purchased_skus(rep.caption)
         if not skus:
@@ -274,16 +275,21 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         code = group_code_from_name(rep.group_name)
         reg = (fallback[0] or region_from_group(rep.group_name) or (code.split("-")[0] if code else "")).strip().upper()
         dlr = (fallback[1] or (code.split("-", 1)[1] if code and "-" in code else "")).strip().upper()
-        if rep.media_group_id:
+        day_str = rep.submitted_at.strftime("%Y%m%d") if rep.submitted_at else ""
+        outlet_name = " ".join((report_details(rep.caption).get("outlet name") or "").strip().lower().split())
+        if outlet_name:
+            # 1 outlet = count 1 per SKU availability even if multiple photos or multiple cartons (e.g. 5 Ctns)
+            dedup_key = ("outlet", tid, int(rep.group_id or 0), day_str, outlet_name)
+        elif rep.media_group_id:
             dedup_key = ("mg", tid, int(rep.group_id or 0), str(rep.media_group_id))
         else:
             ts = rep.submitted_at
             minute_bucket = ts.strftime("%Y%m%d%H%M") if ts else str(rep.id)
             dedup_key = ("cap", tid, int(rep.group_id or 0), minute_bucket, (rep.caption or "").strip()[:120])
-        new_skus = skus - seen_album_skus[dedup_key]
+        new_skus = skus - seen_outlet_skus[dedup_key]
         if not new_skus:
             continue
-        seen_album_skus[dedup_key].update(new_skus)
+        seen_outlet_skus[dedup_key].update(new_skus)
         if reg in region_buckets:
             for sku in new_skus:
                 region_buckets[reg]["skus"][sku] += 1
@@ -455,7 +461,15 @@ def build_daily_report_workbook(data: dict) -> bytes:
 
         data_end = cur - 1
         if data_end >= data_start:
-            rule = DataBarRule(start_type="num", start_value=0, end_type="max", color="EF4444", showValue=True)
+            rule = DataBarRule(
+                start_type="num",
+                start_value=0,
+                end_type="max",
+                color="EF4444",
+                showValue=True,
+                minLength=0,
+                maxLength=100,
+            )
             for c_idx in range(c_team, total_cols + 1):
                 col_ltr = get_column_letter(c_idx)
                 ws.conditional_formatting.add(f"{col_ltr}{data_start}:{col_ltr}{data_end}", rule)

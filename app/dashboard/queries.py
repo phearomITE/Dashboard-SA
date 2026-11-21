@@ -23,6 +23,7 @@ def snapshot(db, online, preview):
     registered = {normalize_group(g.group_name): g for g in groups}
     users = db.query(SAUser).filter(SAUser.is_from_list == 1).all()
     by_id = {(u.group_id, u.telegram_user_id): u for u in users}
+    by_tid_any = {int(u.telegram_user_id): u for u in users if u.telegram_user_id and int(u.telegram_user_id) > 0}
     by_name = {(u.group_id, normalize_name(u.official_name or u.name)): u for u in users}
     roster = []
     for row in db.query(SAList).filter(SAList.is_deleted == 0).order_by(SAList.name, SAList.id):
@@ -30,6 +31,8 @@ def snapshot(db, online, preview):
         gid = group.group_id if group else None
         user = (by_id.get((gid, row.telegram_user_id)) if row.telegram_user_id
                 else by_name.get((gid, normalize_name(row.name))))
+        if user is None and row.telegram_user_id and int(row.telegram_user_id) > 0:
+            user = by_tid_any.get(int(row.telegram_user_id))
         status = "Active"
         if not row.is_active:
             status = "Disabled"

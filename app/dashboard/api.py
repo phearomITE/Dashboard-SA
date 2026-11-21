@@ -696,15 +696,45 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
     @app.put("/api/members/{identity}/leave")
     def set_leave(identity: int, body: Leave, db=Depends(write)):
         row = required(db, SAList, identity)
-        _, user = roster_link(db, row)
-        if not user or not row.is_active:
-            raise HTTPException(409, "Leave requires a synchronized, enabled member.")
+        if not row.is_active:
+            raise HTTPException(409, "Leave requires an enabled member.")
+        group, user = roster_link(db, row)
+        if user is None and row.telegram_user_id and int(row.telegram_user_id) > 0:
+            user = (
+                db.query(SAUser)
+                .filter(SAUser.telegram_user_id == int(row.telegram_user_id), SAUser.group_id < 0)
+                .order_by(SAUser.is_from_list.desc(), SAUser.id.desc())
+                .first()
+            )
+        if user is None:
+            target_gid = group.group_id if group else -(10_000_000 + int(row.id))
+            target_gname = group.group_name if group else row.group_name
+            target_tid = int(row.telegram_user_id) if (row.telegram_user_id and int(row.telegram_user_id) > 0) else -(10_000_000 + int(row.id))
+            user = SAUser(
+                telegram_user_id=target_tid,
+                group_id=target_gid,
+                group_name=target_gname,
+                name=row.name,
+                official_name=row.name,
+                username=row.username,
+                official_username=row.username,
+                region=row.region,
+                dealer=row.dealer,
+                position=row.position,
+                flow_key=users.flow_key_for_position(row.position),
+                working_time=row.working_time,
+                is_from_list=1,
+                source_type=row.source_type or "excel",
+            )
+            db.add(user)
+            db.flush()
         if body.period == "off":
             users.resume_alerts(db, user)
         else:
             if body.period == "range" and (body.start_date is None or body.end_date is None):
                 raise HTTPException(422, "Choose both the start and end date for a range.")
             users.pause_alerts_for_dates(db, user, body.period, body.start_date or local_now().date(), body.end_date)
+        api_cache.clear()
         return {"ok": True}
 
     @app.put("/api/members/{identity}/status")
