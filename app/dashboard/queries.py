@@ -59,19 +59,38 @@ def snapshot(db, online, preview):
                    for region, items in CONTROLLERS_BY_REGION.items() for c in items]
     controllers.extend(dict(name=c.name, telegram_id=str(c.user_id), username=c.username, scope=c.group_code, regional=False)
                        for c in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.group_code))
-    return dict(now=now, master_date=None if preview else "2026-11-14", timezone=get_settings().APP_TIMEZONE, online=online, preview=preview,
+    settings_obj = get_settings()
+    from app.services.khmer_holidays import cambodia_holiday_name, upcoming_cambodia_holidays
+    today_holiday = cambodia_holiday_name(now, extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES)
+    return dict(now=now, master_date=None if preview else "2026-11-14", timezone=settings_obj.APP_TIMEZONE, online=online, preview=preview,
                 alerts_enabled=prefs is None or prefs.alerts_enabled,
                 bot_paused_until=bot_paused_until,
                 bot_pause_reason=bot_pause_reason,
                 controller_alerts_enabled=prefs is None or prefs.controller_alerts_enabled,
                 controller_alert_group_id=str(prefs.controller_alert_group_id if prefs and prefs.controller_alert_group_id else -1004464440125),
                 telethon_configured=telethon_is_configured(),
+                bot_rules=dict(
+                    tracking_mode="24/7 (Mon–Sun, including weekends & public holidays)",
+                    miss_alert_days="Monday – Friday (excludes Cambodia public holidays)",
+                    alert_interval_minutes=settings_obj.ALERT_INTERVAL_MINUTES,
+                    skip_cambodia_holidays=settings_obj.SKIP_CAMBODIA_HOLIDAYS,
+                    today_holiday=today_holiday,
+                    working_shifts=[
+                        "6:30am-4:30pm",
+                        "7:00am-5:00pm (also 7:00am 5:00pm / 7:00am-5pm)",
+                        "7:30am-5:00pm",
+                        "9:00am-8:00pm",
+                    ],
+                    upcoming_holidays=upcoming_cambodia_holidays(
+                        now.date(), limit=8, extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES
+                    ),
+                ),
                 roster=roster, controllers=controllers,
                 groups=[dict(id=str(g.group_id), name=g.group_name or str(g.group_id), region=region_from_group(g.group_name),
                              enabled=bool(g.is_active), members=counts[str(g.group_id)]) for g in groups],
                 products=[dict(id=p.id, sku=p.sku, name=p.name, category=p.category, enabled=p.enabled)
                           for p in db.query(Product).order_by(Product.name, Product.id)],
-                workdays=get_settings().REMINDER_DAYS,
+                workdays=settings_obj.REMINDER_DAYS,
                 schedules=[dict(key=f.key, label=f.label, windows=[
                     dict(start=f"{w.start_hour:02}:{w.start_minute:02}", end=f"{w.end_hour:02}:{w.end_minute:02}")
                     for w in f.windows]) for f in ALL_FLOWS])

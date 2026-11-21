@@ -174,6 +174,42 @@ async function submitUploadMaster(){
       <p v-if="breakError" class="error-text" role="alert">{{breakError}}</p>
       <div class="setting-row"><span class="icon-tile violet"><Clock3 :size="19"/></span><div><strong>Bot timezone</strong><small>{{s.data.timezone}}</small></div></div>
     </section>
+    <section class="panel padded settings-panel">
+      <div class="panel-head"><div><h2>Bot tracking &amp; Miss Report rules</h2><p>Live operational schedule for 24/7 check-in tracking, Mon–Fri Miss Report alerts, and Cambodia public holidays (Khmer Calendar).</p></div><Clock3 class="quiet"/></div>
+      <div class="setting-row">
+        <span class="icon-tile teal"><Radio :size="19"/></span>
+        <div>
+          <strong>Check-in, Report &amp; Location Tracking — 24/7</strong>
+          <small>{{s.data.bot_rules?.tracking_mode || '24/7 (Mon–Sun, including weekends & public holidays)'}}. Every location pin, sale photo, and outlet form is always tracked for Live Map &amp; Report Daily.</small>
+        </div>
+        <span class="badge teal"><i></i>Active 24/7</span>
+      </div>
+      <div class="setting-row">
+        <span class="icon-tile violet"><Clock3 :size="19"/></span>
+        <div>
+          <strong>Miss Report Alert Schedule — Mon to Fri only</strong>
+          <small>{{s.data.bot_rules?.miss_alert_days || 'Monday – Friday (excludes Cambodia public holidays)'}} · Every {{s.data.bot_rules?.alert_interval_minutes || 20}} minutes during each SA's working shift:</small>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+            <span v-for="sh in (s.data.bot_rules?.working_shifts || ['6:30am-4:30pm','7:00am-5:00pm','7:30am-5:00pm','9:00am-8:00pm'])" :key="sh" class="badge gray" style="font-size:11.5px">{{sh}}</span>
+          </div>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span class="icon-tile blue"><CalendarClock :size="19"/></span>
+        <div style="flex:1">
+          <strong>Cambodia Public Holidays (Khmer Calendar Auto-Skip)</strong>
+          <small v-if="s.data.bot_rules?.today_holiday">Today is a Cambodia public holiday: <strong>{{s.data.bot_rules.today_holiday}}</strong> — Miss Report alerts are automatically paused while 24/7 tracking continues.</small>
+          <small v-else>On any Cambodia public holiday (e.g. Khmer New Year, Pchum Ben, Water Festival), the bot continues tracking check-ins 24/7 but automatically skips Miss Report alerts.</small>
+          <div v-if="s.data.bot_rules?.upcoming_holidays?.length" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:6px">
+            <div v-for="h in s.data.bot_rules.upcoming_holidays" :key="h.date" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;background:#f8fafc">
+              <strong>{{h.date}}</strong> <span style="color:#64748b">({{h.weekday}})</span><br>
+              <span style="color:#0f172a">{{h.name}}</span>
+            </div>
+          </div>
+        </div>
+        <span class="badge" :class="s.data.bot_rules?.skip_cambodia_holidays!==false?'teal':'gray'"><i></i>{{s.data.bot_rules?.skip_cambodia_holidays!==false?'Auto-skip ON':'OFF'}}</span>
+      </div>
+    </section>
     <section class="panel padded settings-panel"><div class="panel-head"><div><h2>Controller alerts</h2><p>Send a controller-labeled copy when a missing alert is delivered to its SA group.</p></div><ShieldCheck class="quiet"/></div>
       <form class="controller-alert-settings" @submit.prevent="saveControllerAlerts"><label>SA_Controll group ID<input v-model.trim="controllerGroupId" inputmode="numeric" required aria-label="Controller alert group ID"></label>
         <label class="controller-alert-check"><input type="checkbox" v-model="controllerAlertsEnabled">Send controller copies</label>

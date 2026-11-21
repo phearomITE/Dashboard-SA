@@ -421,8 +421,17 @@ def main() -> None:
     finally:
         if scheduler is not None and scheduler.running:
             try:
-                scheduler.shutdown(wait=False)
-                logger.info("Scheduler shutdown complete")
+                loop = getattr(scheduler, "_eventloop", None)
+                if loop is not None and loop.is_closed():
+                    logger.info("Scheduler event loop already closed during shutdown")
+                else:
+                    scheduler.shutdown(wait=False)
+                    logger.info("Scheduler shutdown complete")
+            except RuntimeError as exc:
+                if "event loop is closed" in str(exc).lower():
+                    logger.info("Scheduler event loop already closed during shutdown")
+                else:
+                    logger.exception("Scheduler shutdown failed")
             except Exception:
                 logger.exception("Scheduler shutdown failed")
         try:

@@ -92,3 +92,33 @@ def cambodia_holiday_name(target: date | datetime, *, extra_holidays_csv: str = 
 def is_cambodia_holiday(target: date | datetime, *, extra_holidays_csv: str = "") -> bool:
     """Return True if target falls on an official Cambodia public holiday."""
     return cambodia_holiday_name(target, extra_holidays_csv=extra_holidays_csv) is not None
+
+
+def upcoming_cambodia_holidays(
+    from_day: date | datetime,
+    limit: int = 8,
+    *,
+    extra_holidays_csv: str = "",
+) -> list[dict]:
+    """Return the next upcoming Cambodia public holidays from from_day onward."""
+    start = from_day.date() if isinstance(from_day, datetime) else from_day
+    extra = _parse_extra_holidays(extra_holidays_csv)
+    items: list[tuple[date, str]] = []
+    for year in (start.year, start.year + 1):
+        for (month, day_num), name in FIXED_CAMBODIA_HOLIDAYS.items():
+            d = date(year, month, day_num)
+            if d >= start and d not in LUNAR_CAMBODIA_HOLIDAYS:
+                items.append((d, name))
+    for d, name in LUNAR_CAMBODIA_HOLIDAYS.items():
+        if d >= start:
+            items.append((d, name))
+    for d in extra:
+        if d >= start:
+            items.append((d, "Custom Public Holiday"))
+    seen: dict[date, str] = {}
+    for d, name in sorted(items, key=lambda pair: pair[0]):
+        seen.setdefault(d, name)
+    return [
+        {"date": d.isoformat(), "weekday": d.strftime("%A"), "name": name}
+        for d, name in list(seen.items())[:limit]
+    ]
