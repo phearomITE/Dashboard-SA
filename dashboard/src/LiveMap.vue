@@ -96,13 +96,21 @@ const detailRows=computed(()=>{
     .sort((a,b)=>b.at.localeCompare(a.at)||b.id-a.id)
     .filter(p=>!term||[p.group,p.staff_employee_id,p.employee_id,p.name,p.province,p.district,p.commune,p.outlet_name].some(v=>String(v||'').toLocaleLowerCase().includes(term)))
 })
+function detailDistanceKm(p){
+  const rr=roadRoutes.value[scope(p)]
+  if(rr&&rr.available&&rr.legByEventId?.[p.id]!=null)return Number(rr.legByEventId[p.id])
+  return p.leg_km!=null?Number(p.leg_km):null
+}
 function exportCheckInDetailCsv(){
-  const header=['Date','group','employeeId','name','latitude','longitude','isOutlet','province','district','commune']
-  const lines=[header,...detailRows.value.map(p=>[
-    formatDetailDate(p.at),p.group||'',p.staff_employee_id||p.reported_employee_id||p.employee_id||'',
-    p.name||'',p.lat!=null?Number(p.lat).toFixed(6):'',p.lon!=null?Number(p.lon).toFixed(6):'',
-    p.is_outlet?'True':'False',p.province||'',p.district||'',p.commune||''
-  ])]
+  const header=['Date','group','employeeId','name','latitude','longitude','isOutlet','province','district','commune','distanceKm']
+  const lines=[header,...detailRows.value.map(p=>{
+    const dist=detailDistanceKm(p)
+    return [
+      formatDetailDate(p.at),p.group||'',p.staff_employee_id||p.reported_employee_id||p.employee_id||'',
+      p.name||'',p.lat!=null?Number(p.lat).toFixed(6):'',p.lon!=null?Number(p.lon).toFixed(6):'',
+      p.is_outlet?'True':'False',p.province||'',p.district||'',p.commune||'',dist!=null?dist.toFixed(2):''
+    ]
+  })]
   const csv='\uFEFF'+lines.map(line=>line.map(value=>'"'+String(value??'').replaceAll('"','""')+'"').join(',')).join('\r\n')
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a')
   a.href=url;a.download=`check-in-detail-${fromDate.value}-to-${toDate.value}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
@@ -283,9 +291,9 @@ function template(){
       <div class="detail-head-actions"><label class="detail-search"><Search :size="14"/><input type="search" v-model="detailSearch" placeholder="Search group, employee ID, location..."></label>
         <button type="button" class="btn" @click="exportCheckInDetailCsv"><Download :size="14"/>Export CSV</button>
         <button type="button" class="icon" aria-label="Close check in detail" @click="checkInDetailOpen=false"><X :size="18"/></button></div></div>
-    <div class="detail-table-wrap"><table><thead><tr><th>Date</th><th>group</th><th>employeeId</th><th>name</th><th>latitude</th><th>longitude</th><th>isOutlet</th><th>province</th><th>district</th><th>commune</th></tr></thead>
-      <tbody><tr v-for="p in detailRows" :key="p.id"><td>{{formatDetailDate(p.at)}}</td><td>{{p.group||'—'}}</td><td>{{p.staff_employee_id||p.reported_employee_id||p.employee_id||'—'}}</td><td><strong>{{p.name||'—'}}</strong></td><td>{{p.lat!=null?Number(p.lat).toFixed(6):'—'}}</td><td>{{p.lon!=null?Number(p.lon).toFixed(6):'—'}}</td><td><span class="badge" :class="p.is_outlet?'teal':'gray'"><i/>{{p.is_outlet?'True':'False'}}</span></td><td>{{p.province||'—'}}</td><td>{{p.district||'—'}}</td><td>{{p.commune||'—'}}</td></tr>
-        <tr v-if="!detailRows.length"><td colspan="10" class="miss-empty">No check-in detail rows for the selected filters.</td></tr></tbody></table></div>
+    <div class="detail-table-wrap"><table><thead><tr><th>Date</th><th>group</th><th>employeeId</th><th>name</th><th>latitude</th><th>longitude</th><th>isOutlet</th><th>province</th><th>district</th><th>commune</th><th>Distance</th></tr></thead>
+      <tbody><tr v-for="p in detailRows" :key="p.id"><td>{{formatDetailDate(p.at)}}</td><td>{{p.group||'—'}}</td><td>{{p.staff_employee_id||p.reported_employee_id||p.employee_id||'—'}}</td><td><strong>{{p.name||'—'}}</strong></td><td>{{p.lat!=null?Number(p.lat).toFixed(6):'—'}}</td><td>{{p.lon!=null?Number(p.lon).toFixed(6):'—'}}</td><td><span class="badge" :class="p.is_outlet?'teal':'gray'"><i/>{{p.is_outlet?'True':'False'}}</span></td><td>{{p.province||'—'}}</td><td>{{p.district||'—'}}</td><td>{{p.commune||'—'}}</td><td>{{km(detailDistanceKm(p))}}</td></tr>
+        <tr v-if="!detailRows.length"><td colspan="11" class="miss-empty">No check-in detail rows for the selected filters.</td></tr></tbody></table></div>
   </section></div></Teleport>
   <dialog ref="dialog" class="dealer-dialog" @cancel="uploading&&$event.preventDefault()">
     <form @submit.prevent="upload"><div class="dialog-head"><h2>Upload dealer locations</h2><button type="button" class="icon" aria-label="Close upload" :disabled="uploading" @click="dialog.close()"><X :size="18"/></button></div>
