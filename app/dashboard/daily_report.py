@@ -286,10 +286,9 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
     )
     from app.services.outlet_form import report_details
     seen_outlet_skus: dict[tuple, set[str]] = defaultdict(set)
+    reported_outlets_region: dict[str, set[tuple]] = defaultdict(set)
+    reported_outlets_dealer: dict[tuple[str, str], set[tuple]] = defaultdict(set)
     for rep in reports:
-        skus = extract_purchased_skus(rep.caption)
-        if not skus:
-            continue
         tid = int(rep.telegram_user_id or 0)
         fallback = roster_scope_by_tid.get(tid, ("", ""))
         code = group_code_from_name(rep.group_name)
@@ -306,6 +305,20 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
             ts = rep.submitted_at
             minute_bucket = ts.strftime("%Y%m%d%H%M") if ts else str(rep.id)
             dedup_key = ("cap", tid, int(rep.group_id or 0), minute_bucket, (rep.caption or "").strip()[:120])
+
+        skus = extract_purchased_skus(rep.caption)
+        if outlet_name or skus:
+            if reg in region_buckets:
+                reported_outlets_region[reg].add(dedup_key)
+                if tid > 0:
+                    active_tids_region[reg].add(tid)
+            dkey = _ensure_dealer(reg, dlr)
+            if dkey:
+                reported_outlets_dealer[dkey].add(dedup_key)
+                if tid > 0:
+                    active_tids_dealer[dkey].add(tid)
+        if not skus:
+            continue
         new_skus = skus - seen_outlet_skus[dedup_key]
         if not new_skus:
             continue
@@ -330,6 +343,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         row["active"] = len(active_tids_region[reg])
         row["district"] = len(districts_region[reg])
         row["commune"] = len(communes_region[reg])
+        row["outlets_visit"] = max(row["outlets_visit"], len(reported_outlets_region[reg]))
         row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"]) if row["active"] > 0 else 0
         regions_out.append(row)
         all_districts.update(districts_region[reg])
@@ -360,6 +374,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         row["active"] = len(active_tids_dealer[dkey])
         row["district"] = len(districts_dealer[dkey])
         row["commune"] = len(communes_dealer[dkey])
+        row["outlets_visit"] = max(row["outlets_visit"], len(reported_outlets_dealer[dkey]))
         row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"]) if row["active"] > 0 else 0
         dealers_out.append(row)
 
