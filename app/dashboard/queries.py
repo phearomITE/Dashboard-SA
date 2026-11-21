@@ -40,8 +40,6 @@ def snapshot(db, online, preview):
             status = "Leave scheduled" if user.alert_pause_start and user.alert_pause_start > now else "On leave"
         elif user and user.alert_active_from and user.alert_active_from > now:
             status = "Starts tomorrow"
-        elif not user:
-            status = "Awaiting sync" if group else "Unregistered group"
         assigned = controllers_for_group(row.group_name) or controllers_for_region(row.region)
         controller = ", ".join(c.name for c in assigned) or row.controller or ""
         roster.append(dict(id=row.id, name=row.name, username=row.username or (user.username if user else "") or "",
