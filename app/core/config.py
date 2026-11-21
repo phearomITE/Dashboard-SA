@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     TELETHON_SESSION_FILE: str = "backups/telethon_recovery.session"
     TELETHON_AUTO_RECOVER_ON_STARTUP: bool = True
 
+    SKIP_CAMBODIA_HOLIDAYS: bool = True
+    EXTRA_HOLIDAY_DATES: str = ""
+
     # Ignore legacy .env keys from earlier releases and accept UTF-8 files
     # safely after Windows PowerShell rewrites them.
     model_config = SettingsConfigDict(

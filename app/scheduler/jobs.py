@@ -18,6 +18,7 @@ from app.data.sa_members import normalize_group
 from app.database.database import SessionLocal
 from app.database.models import MissingSalePhotoAlert, MonitoringPreferences, PinHistory, SAList, SAUser, SalePhotoReport
 from app.services.formatter import sale_photo_missing_alert_message, special_window_alert_message
+from app.services.khmer_holidays import cambodia_holiday_name
 from app.services.shift_config import (
     ALL_FLOWS,
     all_unique_run_times,
@@ -46,7 +47,14 @@ def local_now():
 
 
 def is_work_day(day: datetime) -> bool:
-    return day.weekday() in settings.work_days_list
+    """Return True only on Mon-Fri (configured work_days_list) and non-holiday days in Cambodia."""
+    if day.weekday() not in settings.work_days_list:
+        return False
+    if settings.SKIP_CAMBODIA_HOLIDAYS and cambodia_holiday_name(
+        day, extra_holidays_csv=settings.EXTRA_HOLIDAY_DATES
+    ):
+        return False
+    return True
 
 
 def regular_run_times_for_today(now: datetime) -> list[datetime]:
@@ -601,7 +609,19 @@ async def send_alert_job(application: Application, run_hour: int | None = None, 
         return
     now = local_now()
     if not is_work_day(now):
-        logger.info("Non-work day. Skip alert.")
+        holiday = (
+            cambodia_holiday_name(now, extra_holidays_csv=settings.EXTRA_HOLIDAY_DATES)
+            if settings.SKIP_CAMBODIA_HOLIDAYS
+            else None
+        )
+        if holiday:
+            logger.info(
+                "Cambodia public holiday (%s: %s). Bot continues 24/7 check-in tracking; skipping Miss Report alert.",
+                now.date().isoformat(),
+                holiday,
+            )
+        else:
+            logger.info("Non-work day (%s). Bot continues 24/7 check-in tracking; skipping Miss Report alert.", now.strftime("%A"))
         return
 
     run_hour = now.hour if run_hour is None else run_hour

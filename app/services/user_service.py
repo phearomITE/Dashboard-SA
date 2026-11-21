@@ -137,17 +137,38 @@ def _placeholder_user_id(group_name: str | None, name: str, username: str | None
     return -1 * (digest % 900_000_000_000 + 100_000_000_000)
 
 
+def normalize_working_time_label(raw: str | None) -> str | None:
+    """Normalize common working-time formats (e.g. '7:00am 5:00pm', '7:00am-5pm') to canonical shifts."""
+    text = (raw or "").strip().lower()
+    if not text:
+        return None
+    compact = re.sub(r"[\s–—-]+", "-", text).strip("-")
+    mapping = {
+        "6:30am-4:30pm": "6:30am-4:30pm",
+        "6:30-4:30pm": "6:30am-4:30pm",
+        "06:30am-04:30pm": "6:30am-4:30pm",
+        "7:00am-5:00pm": "7:00am-5:00pm",
+        "7:00am-5pm": "7:00am-5:00pm",
+        "7am-5:00pm": "7:00am-5:00pm",
+        "7am-5pm": "7:00am-5:00pm",
+        "07:00am-05:00pm": "7:00am-5:00pm",
+        "7:30am-5:00pm": "7:30am-5:00pm",
+        "7:30am-5pm": "7:30am-5:00pm",
+        "07:30am-05:00pm": "7:30am-5:00pm",
+        "9:00am-8:00pm": "9:00am-8:00pm",
+        "9:00am-8pm": "9:00am-8:00pm",
+        "9am-8:00pm": "9:00am-8:00pm",
+        "9am-8pm": "9:00am-8:00pm",
+        "09:00am-08:00pm": "9:00am-8:00pm",
+    }
+    return mapping.get(compact)
+
+
 def canonical_working_time_for_member(member: dict) -> str:
     """Return one of the four approved schedules from the official SA list."""
-    explicit = (member.get("working_time") or "").strip()
-    approved = {
-        "7:00am-5:00pm",
-        "6:30am-4:30pm",
-        "7:30am-5:00pm",
-        "9:00am-8:00pm",
-    }
-    if explicit in approved:
-        return explicit
+    normalized = normalize_working_time_label(member.get("working_time"))
+    if normalized:
+        return normalized
 
     # Backward-compatible fallback for manually constructed legacy rows.
     name_key = normalize_name(member.get("name"))
