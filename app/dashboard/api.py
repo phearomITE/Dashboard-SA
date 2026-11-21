@@ -865,7 +865,7 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
     def index():
         if not (DIST / "index.html").exists():
             raise HTTPException(503, "Dashboard assets are missing. Build the frontend in the dashboard directory.")
-        return FileResponse(DIST / "index.html")
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
     app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
     return app
