@@ -14,7 +14,6 @@ from app.services.user_service import (
     canonical_working_time_for_member,
     flow_key_for_position,
     normalize_name,
-    sync_group_members_from_list,
 )
 
 
@@ -29,6 +28,8 @@ def parse_master_sa_rows(rows):
         "telegram_user_id": "telegram_id",
         "employee id": "employee_id",
         "employee_id": "employee_id",
+        "empployee id": "employee_id",
+        "empployee_id": "employee_id",
         "emp id": "employee_id",
         "emp_id": "employee_id",
         "staff id": "employee_id",
@@ -49,7 +50,13 @@ def parse_master_sa_rows(rows):
         "group_name": "group",
         "controller": "controller",
     }
-    headers = [aliases.get(str(v or "").strip().lower(), str(v or "").strip().lower()) for v in header_row]
+    headers = []
+    for v in header_row:
+        col = " ".join(str(v or "").strip().lower().split())
+        mapped = aliases.get(col)
+        if not mapped and "emp" in col and "id" in col:
+            mapped = "employee_id"
+        headers.append(mapped or col)
     if "name" not in headers or ("group" not in headers and ("region" not in headers or "dealer" not in headers)):
         raise ValueError(
             "Include columns: Telegram ID, SA Name, Username, Region, Dealer, Position, Working Time, Group, Controller."
@@ -134,6 +141,7 @@ def import_master_sa(db, content: bytes, extension: str):
 
     now = local_now()
     registered_groups = db.query(TelegramGroup).filter(TelegramGroup.group_id < 0).all()
+    group_name_by_id = {g.group_id: g.group_name for g in registered_groups if g.group_name}
     group_by_norm = {normalize_group(g.group_name): g.group_name for g in registered_groups if g.group_name}
     groups_by_code: dict[str, list[str]] = {}
     for g in registered_groups:
@@ -143,14 +151,49 @@ def import_master_sa(db, content: bytes, extension: str):
         if gcode:
             groups_by_code.setdefault(gcode, []).append(g.group_name)
 
+    # Single query to load all Telegram group SAUser rows:
+    # 1) resolves each SA's active Telegram group directly
+    # 2) preserves known Telegram usernames when CSV Username is blank
+    # 3) allows fast in-memory bulk sync without N+1 DB round-trips
+    all_sa_users = db.query(SAUser).filter(SAUser.group_id < 0).all()
+    sa_users_by_group_id: dict[int, list[SAUser]] = {}
+    active_candidates_by_tid: dict[int, list[SAUser]] = {}
+    for u in all_sa_users:
+        sa_users_by_group_id.setdefault(u.group_id, []).append(u)
+        if u.telegram_user_id and int(u.telegram_user_id) > 0:
+            active_candidates_by_tid.setdefault(int(u.telegram_user_id), []).append(u)
+
+    active_group_by_tid: dict[int, str] = {}
+    active_username_by_tid: dict[int, str] = {}
+    for tid_int, users in active_candidates_by_tid.items():
+        users.sort(
+            key=lambda u: (
+                1 if u.group_id in group_name_by_id else 0,
+                1 if u.last_pin_at is not None else 0,
+                u.last_pin_at.timestamp() if u.last_pin_at is not None else 0.0,
+                u.updated_at.timestamp() if u.updated_at is not None else 0.0,
+                u.id or 0,
+            ),
+            reverse=True,
+        )
+        for u in users:
+            resolved_tg_name = group_name_by_id.get(u.group_id) or (u.group_name or "").strip()
+            if resolved_tg_name and tid_int not in active_group_by_tid:
+                active_group_by_tid[tid_int] = group_by_norm.get(normalize_group(resolved_tg_name), resolved_tg_name)
+            uname = normalize_username(u.username)
+            if uname and tid_int not in active_username_by_tid:
+                active_username_by_tid[tid_int] = uname
+
     existing_all = db.query(SAList).order_by(SAList.is_deleted.asc(), SAList.id.asc()).all()
     by_tid_group = {}
     by_tid_any: dict[int, list[SAList]] = {}
     by_name_group = {}
     by_name_any: dict[str, list[SAList]] = {}
+    by_exact_pair: dict[tuple[str, str], SAList] = {}
     for r in existing_all:
         gn = normalize_group(r.group_name)
         nn = normalize_name(r.name)
+        by_exact_pair[(r.group_name, r.name)] = r
         if r.telegram_user_id and int(r.telegram_user_id) > 0:
             tid_int = int(r.telegram_user_id)
             by_tid_group.setdefault((gn, tid_int), r)
@@ -159,10 +202,16 @@ def import_master_sa(db, content: bytes, extension: str):
             by_name_group.setdefault((gn, nn), r)
             by_name_any.setdefault(nn, []).append(r)
 
-    retained_ids: set[int] = set()
+    retained_rows: set[SAList] = set()
     touched_groups: set[str] = set()
+    active_members_by_gnorm: dict[str, list[SAList]] = {}
 
     def _resolve_group(m: dict) -> str:
+        # Priority 1: assign Group directly from the Telegram group where this SA is active
+        tid = m["telegram_user_id"]
+        if tid and tid in active_group_by_tid:
+            return active_group_by_tid[tid]
+
         raw_group = (m["group_name"] or "").strip()
         if raw_group:
             gnorm = normalize_group(raw_group)
@@ -174,7 +223,6 @@ def import_master_sa(db, content: bytes, extension: str):
                 return matches[0]
             return raw_group
 
-        tid = m["telegram_user_id"]
         if tid and tid in by_tid_any:
             for existing_row in by_tid_any[tid]:
                 if (existing_row.region or "").strip().upper() == m["region"] and existing_row.group_name:
@@ -205,26 +253,35 @@ def import_master_sa(db, content: bytes, extension: str):
         row = None
         if tid:
             cand = by_tid_group.get((gnorm, tid))
-            if cand is not None and cand.id not in retained_ids:
+            if cand is not None and cand not in retained_rows:
                 row = cand
             if row is None:
                 for cand in by_tid_any.get(tid, ()):
-                    if cand.id not in retained_ids:
+                    if cand not in retained_rows:
                         row = cand
                         break
         if row is None:
             cand = by_name_group.get((gnorm, nkey))
-            if cand is not None and cand.id not in retained_ids:
+            if cand is not None and cand not in retained_rows:
+                row = cand
+        if row is None and (resolved_group, m["name"]) in by_exact_pair:
+            cand = by_exact_pair[(resolved_group, m["name"])]
+            if cand not in retained_rows:
                 row = cand
         if row is None and nkey:
-            cands = [c for c in by_name_any.get(nkey, ()) if c.id not in retained_ids]
+            cands = [c for c in by_name_any.get(nkey, ()) if c not in retained_rows]
             if len(cands) == 1:
                 row = cands[0]
 
-        identity = f"id:{tid}" if tid else f"username:{m['username']}" if m["username"] else f"name:{nkey}"
+        resolved_username = (
+            m["username"]
+            or (row.username if row is not None and row.username else None)
+            or (active_username_by_tid.get(tid) if tid else None)
+        )
+        identity = f"id:{tid}" if tid else f"username:{resolved_username}" if resolved_username else f"name:{nkey}"
         source_key = f"{gnorm}|{identity}"
         if row is not None:
-            retained_ids.add(row.id)
+            retained_rows.add(row)
             old_gnorm = normalize_group(row.group_name)
             has_emp_col = "employee_id" in m
             emp_val = m.get("employee_id")
@@ -232,7 +289,7 @@ def import_master_sa(db, content: bytes, extension: str):
                 row.telegram_user_id != tid
                 or (has_emp_col and row.employee_id != emp_val)
                 or row.name != m["name"]
-                or row.username != m["username"]
+                or row.username != resolved_username
                 or row.region != m["region"]
                 or row.dealer != m["dealer"]
                 or row.position != m["position"]
@@ -246,7 +303,7 @@ def import_master_sa(db, content: bytes, extension: str):
             if has_emp_col:
                 row.employee_id = emp_val
             row.name = m["name"]
-            row.username = m["username"]
+            row.username = resolved_username
             row.region = m["region"]
             row.dealer = m["dealer"]
             row.position = m["position"]
@@ -268,7 +325,7 @@ def import_master_sa(db, content: bytes, extension: str):
                 telegram_user_id=tid,
                 employee_id=m.get("employee_id"),
                 name=m["name"],
-                username=m["username"],
+                username=resolved_username,
                 region=m["region"],
                 dealer=m["dealer"],
                 position=m["position"],
@@ -284,18 +341,21 @@ def import_master_sa(db, content: bytes, extension: str):
                 updated_at=now,
             )
             db.add(row)
-            db.flush()
-            retained_ids.add(row.id)
+            retained_rows.add(row)
             if gnorm:
                 touched_groups.add(gnorm)
+            by_exact_pair[(resolved_group, m["name"])] = row
             by_name_group.setdefault((gnorm, nkey), row)
             by_name_any.setdefault(nkey, []).append(row)
             if tid:
                 by_tid_group.setdefault((gnorm, tid), row)
                 by_tid_any.setdefault(tid, []).append(row)
 
+        if gnorm:
+            active_members_by_gnorm.setdefault(gnorm, []).append(row)
+
     for old_row in existing_all:
-        if old_row.id not in retained_ids and (old_row.is_deleted == 0 or old_row.is_active == 1):
+        if old_row not in retained_rows and (old_row.is_deleted == 0 or old_row.is_active == 1):
             old_row.is_deleted = 1
             old_row.is_active = 0
             old_row.dashboard_override = 1
@@ -304,10 +364,42 @@ def import_master_sa(db, content: bytes, extension: str):
             if old_gnorm:
                 touched_groups.add(old_gnorm)
 
-    db.commit()
+    # Fast in-memory bulk sync for SAUser rows in touched registered Telegram groups
     for g in registered_groups:
-        if normalize_group(g.group_name) in touched_groups:
-            sync_group_members_from_list(db, g.group_id, g.group_name)
+        gnorm = normalize_group(g.group_name)
+        if not gnorm or gnorm not in touched_groups:
+            continue
+        group_users = sa_users_by_group_id.get(g.group_id, [])
+        if not group_users:
+            continue
+        members = active_members_by_gnorm.get(gnorm, [])
+        user_by_tid = {int(u.telegram_user_id): u for u in group_users if u.telegram_user_id and int(u.telegram_user_id) > 0}
+        user_by_name = {normalize_name(u.official_name or u.name): u for u in group_users if normalize_name(u.official_name or u.name)}
+        matched_users: set[SAUser] = set()
+        for member in members:
+            u = None
+            if member.telegram_user_id and int(member.telegram_user_id) > 0:
+                u = user_by_tid.get(int(member.telegram_user_id))
+            if u is None:
+                u = user_by_name.get(normalize_name(member.name))
+            if u is not None:
+                matched_users.add(u)
+                u.group_name = g.group_name
+                u.official_name = member.name
+                if member.username:
+                    u.official_username = member.username
+                u.region = member.region
+                u.dealer = member.dealer
+                u.position = member.position
+                u.flow_key = flow_key_for_position(member.position)
+                u.working_time = member.working_time
+                u.is_from_list = 1
+                u.source_type = "excel"
+                u.updated_at = now
+        for u in group_users:
+            if u not in matched_users and u.source_type == "excel" and u.is_from_list != 0:
+                u.is_from_list = 0
+                u.updated_at = now
 
     db.commit()
     return {"count": len(records), "message": f"Uploaded {len(records)} Master SA records."}

@@ -458,7 +458,9 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
             if len(content) + len(chunk) > 8_000_000:
                 raise HTTPException(413, "Choose a file smaller than 8 MB.")
             content.extend(chunk)
-        return await run_in_threadpool(import_master_sa, db, bytes(content), format)
+        result = await run_in_threadpool(import_master_sa, db, bytes(content), format)
+        api_cache.clear()
+        return result
 
     @app.post("/api/members", status_code=201)
     def add_member(body: MemberAdd, request: Request, db=Depends(write)):
