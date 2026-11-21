@@ -42,6 +42,11 @@ class RoadRouteInput(Input):
     points: list[tuple[float, float]] = Field(min_length=2, max_length=120)
 
 
+class HolidayInput(Input):
+    date: date
+    name: str = Field(min_length=1, max_length=200)
+
+
 class Login(Input):
     code: str = Field(default="", max_length=128)
 
@@ -432,6 +437,45 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.post("/api/holidays", status_code=201)
+    def create_holiday(body: HolidayInput, db=Depends(write)):
+        from app.database.models import PublicHoliday
+        existing = db.query(PublicHoliday).filter(PublicHoliday.holiday_date == body.date).first()
+        if existing:
+            existing.name = body.name
+            existing.updated_at = local_now()
+            db.flush()
+            api_cache.clear()
+            return {"id": existing.id, "date": existing.holiday_date.isoformat(), "name": existing.name, "message": "Holiday updated."}
+        row = PublicHoliday(holiday_date=body.date, name=body.name)
+        db.add(row)
+        db.flush()
+        api_cache.clear()
+        return {"id": row.id, "date": row.holiday_date.isoformat(), "name": row.name, "message": "Holiday added."}
+
+    @app.put("/api/holidays/{holiday_id}")
+    def update_holiday(holiday_id: int, body: HolidayInput, db=Depends(write)):
+        from app.database.models import PublicHoliday
+        row = required(db, PublicHoliday, holiday_id)
+        conflict = db.query(PublicHoliday).filter(PublicHoliday.holiday_date == body.date, PublicHoliday.id != holiday_id).first()
+        if conflict:
+            raise HTTPException(409, "Another holiday already exists on that date.")
+        row.holiday_date = body.date
+        row.name = body.name
+        row.updated_at = local_now()
+        db.flush()
+        api_cache.clear()
+        return {"id": row.id, "date": row.holiday_date.isoformat(), "name": row.name, "message": "Holiday updated."}
+
+    @app.delete("/api/holidays/{holiday_id}")
+    def delete_holiday(holiday_id: int, db=Depends(write)):
+        from app.database.models import PublicHoliday
+        row = required(db, PublicHoliday, holiday_id)
+        db.delete(row)
+        db.flush()
+        api_cache.clear()
+        return {"message": "Holiday deleted."}
 
     @app.get("/api/analytics")
     def metrics(days: int = Query(7, ge=1, le=366), from_date: date | None = None, to_date: date | None = None):

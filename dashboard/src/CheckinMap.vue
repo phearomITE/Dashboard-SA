@@ -9,7 +9,7 @@ import brandLogo from './assets/chip-mong-foodbev.png'
 const props=defineProps({events:{type:Array,required:true},origins:{type:Array,required:true},roadRoutes:{type:Object,default:()=>({})},selected:String,fitKey:String,focused:Number})
 const emit=defineEmits(['select','focus'])
 const {request}=useWorkspace()
-const element=ref(null),mapType=ref('street'),areaError=ref(false),tileError=ref(false),showDealers=ref(true)
+const element=ref(null),mapType=ref('satellite'),areaError=ref(false),tileError=ref(false),showDealers=ref(true)
 let map,geometry,labels,points,dealersLayer,road,satellite,observer,revision=0,viewportKey='',countryAreas
 const cambodia=[[10.35,102.32],[14.69,107.64]]
 const inCambodia=p=>Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))&&p.lat>=10.2&&p.lat<=14.8&&p.lon>=102.2&&p.lon<=107.8
@@ -109,7 +109,7 @@ onMounted(()=>{
   road.on('tileerror',()=>{tileError.value=true})
   satellite=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin'})
   satellite.on('tileerror',()=>{tileError.value=true})
-  road.addTo(map);fit();map.on('moveend',areas);repaint()
+  satellite.addTo(map);fit();map.on('moveend',areas);repaint()
   observer=new ResizeObserver(()=>{map?.invalidateSize();if(map&&!props.selected)fit()});observer.observe(element.value)
 })
 watch(()=>[props.events,props.origins,props.roadRoutes,props.selected,props.focused],repaint)

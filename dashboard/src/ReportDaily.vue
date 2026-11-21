@@ -83,7 +83,7 @@ function summarize(rows, label) {
       out.skus[k] += r.skus?.[k] || 0
     }
   }
-  out.avg_outlets_visit = out.active > 0 ? Number((out.outlets_visit / out.active).toFixed(1)) : 0
+  out.avg_outlets_visit = out.active > 0 ? Math.round(out.outlets_visit / out.active) : 0
   return out
 }
 
@@ -134,8 +134,7 @@ function barWidth(value, maxVal) {
 }
 
 function fmtAvg(value) {
-  const n = Number(value || 0)
-  return n === 0 ? '0' : n.toFixed(1)
+  return String(Math.round(Number(value || 0)))
 }
 
 let serial = 0

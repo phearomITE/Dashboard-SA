@@ -1,8 +1,8 @@
 # app/database/models.py
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Date, DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.database import Base
@@ -306,3 +306,15 @@ class VoiceReasonHistory(Base):
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=local_now, index=True)
     transcribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class PublicHoliday(Base):
+    """Editable Cambodia public holidays used to auto-skip Miss Report alerts."""
+
+    __tablename__ = "public_holidays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    holiday_date: Mapped[date] = mapped_column(Date, unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=local_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=local_now, onupdate=local_now)

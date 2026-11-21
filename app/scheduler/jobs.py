@@ -18,7 +18,7 @@ from app.data.sa_members import normalize_group
 from app.database.database import SessionLocal
 from app.database.models import MissingSalePhotoAlert, MonitoringPreferences, PinHistory, SAList, SAUser, SalePhotoReport
 from app.services.formatter import sale_photo_missing_alert_message, special_window_alert_message
-from app.services.khmer_holidays import cambodia_holiday_name
+from app.services.khmer_holidays import cambodia_holiday_name, db_holiday_name
 from app.services.shift_config import (
     ALL_FLOWS,
     all_unique_run_times,
@@ -608,21 +608,24 @@ async def send_alert_job(application: Application, run_hour: int | None = None, 
         )
         return
     now = local_now()
-    if not is_work_day(now):
-        holiday = (
-            cambodia_holiday_name(now, extra_holidays_csv=settings.EXTRA_HOLIDAY_DATES)
-            if settings.SKIP_CAMBODIA_HOLIDAYS
-            else None
-        )
+    if now.weekday() not in settings.work_days_list:
+        logger.info("Non-work day (%s). Bot continues 24/7 check-in tracking; skipping Miss Report alert.", now.strftime("%A"))
+        return
+    if settings.SKIP_CAMBODIA_HOLIDAYS:
+        def _check_holiday_sync() -> str | None:
+            db = SessionLocal()
+            try:
+                return db_holiday_name(db, now, extra_holidays_csv=settings.EXTRA_HOLIDAY_DATES)
+            finally:
+                db.close()
+        holiday = await asyncio.to_thread(_check_holiday_sync)
         if holiday:
             logger.info(
                 "Cambodia public holiday (%s: %s). Bot continues 24/7 check-in tracking; skipping Miss Report alert.",
                 now.date().isoformat(),
                 holiday,
             )
-        else:
-            logger.info("Non-work day (%s). Bot continues 24/7 check-in tracking; skipping Miss Report alert.", now.strftime("%A"))
-        return
+            return
 
     run_hour = now.hour if run_hour is None else run_hour
     run_minute = now.minute if run_minute is None else run_minute

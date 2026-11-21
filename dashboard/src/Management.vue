@@ -43,6 +43,33 @@ async function runTelethonRecovery(){
   try{await save('recovery/run','POST',{day:recDay.value,from_time:recFrom.value,to_time:recTo.value,group:recGroup.value})}
   catch(e){recError.value=e.message}finally{recBusy.value=false}
 }
+const holidayYear=ref(String((s.data.now||'2026').slice(0,4)))
+const holidayEditId=ref(null),holidayDate=ref(''),holidayName=ref(''),holidayBusy=ref(false),holidayError=ref('')
+const allHolidays=computed(()=>s.data.bot_rules?.holidays||[])
+const holidayYears=computed(()=>{
+  const ys=[...new Set(allHolidays.value.map(h=>String(h.year||String(h.date||'').slice(0,4))).filter(Boolean))].sort()
+  return ys.length?ys:[String((s.data.now||'2026').slice(0,4))]
+})
+const filteredHolidays=computed(()=>holidayYear.value==='all'?allHolidays.value:allHolidays.value.filter(h=>String(h.year||String(h.date||'').slice(0,4))===holidayYear.value))
+function editHoliday(h){holidayEditId.value=h.id;holidayDate.value=h.date;holidayName.value=h.name;holidayError.value=''}
+function cancelHolidayEdit(){holidayEditId.value=null;holidayDate.value='';holidayName.value='';holidayError.value=''}
+async function saveHoliday(){
+  if(!holidayDate.value||!holidayName.value.trim()){holidayError.value='Enter both a holiday date and name.';return}
+  holidayBusy.value=true;holidayError.value=''
+  try{
+    const path=holidayEditId.value?`holidays/${holidayEditId.value}`:'holidays'
+    const method=holidayEditId.value?'PUT':'POST'
+    await save(path,method,{date:holidayDate.value,name:holidayName.value.trim()},holidayEditId.value?'Holiday updated.':'Holiday added.')
+    cancelHolidayEdit()
+  }catch(e){holidayError.value=e.message}finally{holidayBusy.value=false}
+}
+async function removeHoliday(h){
+  holidayBusy.value=true;holidayError.value=''
+  try{
+    await save(`holidays/${h.id}`,'DELETE',undefined,'Holiday deleted.')
+    if(holidayEditId.value===h.id)cancelHolidayEdit()
+  }catch(e){holidayError.value=e.message}finally{holidayBusy.value=false}
+}
 const lists={roster:'roster',groups:'groups',products:'products',controllers:'controllers'}
 const icons={roster:Users,groups:Layers3,products:Boxes,controllers:ShieldCheck}
 const labels={roster:'members',groups:'groups',products:'products',controllers:'assignments'}
@@ -194,20 +221,45 @@ async function submitUploadMaster(){
           </div>
         </div>
       </div>
-      <div class="setting-row">
+      <div class="setting-row" style="align-items:flex-start">
         <span class="icon-tile blue"><CalendarClock :size="19"/></span>
-        <div style="flex:1">
-          <strong>Cambodia Public Holidays (Khmer Calendar Auto-Skip)</strong>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+            <strong>Cambodia Public Holidays (Khmer Calendar Auto-Skip)</strong>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <div style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:2px;gap:2px">
+                <button v-for="yr in holidayYears" :key="yr" type="button" class="btn" :style="holidayYear===yr?'background:#fff;color:#0f5132;border:none;padding:4px 10px;font-size:12px':'background:transparent;border:none;padding:4px 10px;font-size:12px;color:#475569'" @click="holidayYear=yr">{{yr}}</button>
+                <button type="button" class="btn" :style="holidayYear==='all'?'background:#fff;color:#0f5132;border:none;padding:4px 10px;font-size:12px':'background:transparent;border:none;padding:4px 10px;font-size:12px;color:#475569'" @click="holidayYear='all'">All ({{allHolidays.length}})</button>
+              </div>
+              <span class="badge" :class="s.data.bot_rules?.skip_cambodia_holidays!==false?'teal':'gray'"><i></i>{{s.data.bot_rules?.skip_cambodia_holidays!==false?'Auto-skip ON':'OFF'}}</span>
+            </div>
+          </div>
           <small v-if="s.data.bot_rules?.today_holiday">Today is a Cambodia public holiday: <strong>{{s.data.bot_rules.today_holiday}}</strong> — Miss Report alerts are automatically paused while 24/7 tracking continues.</small>
-          <small v-else>On any Cambodia public holiday (e.g. Khmer New Year, Pchum Ben, Water Festival), the bot continues tracking check-ins 24/7 but automatically skips Miss Report alerts.</small>
-          <div v-if="s.data.bot_rules?.upcoming_holidays?.length" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:6px">
-            <div v-for="h in s.data.bot_rules.upcoming_holidays" :key="h.date" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;background:#f8fafc">
-              <strong>{{h.date}}</strong> <span style="color:#64748b">({{h.weekday}})</span><br>
-              <span style="color:#0f172a">{{h.name}}</span>
+          <small v-else>Showing {{filteredHolidays.length}} Cambodia public holidays ({{holidayYear==='all'?'all years':holidayYear}}). Add, edit, or remove any holiday date below — changes apply immediately to Miss Report alerts.</small>
+          <form @submit.prevent="saveHoliday" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#f8fafc">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:#475569">Date
+              <input v-model="holidayDate" type="date" required style="height:34px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12.5px">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:#475569;flex:1;min-width:200px">Holiday name
+              <input v-model.trim="holidayName" type="text" required maxlength="200" placeholder="e.g. Khmer New Year (Day 1)" style="height:34px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12.5px">
+            </label>
+            <button type="submit" class="primary" :disabled="holidayBusy" style="height:34px">{{holidayBusy?'Saving…':(holidayEditId?'Save changes':'+ Add holiday')}}</button>
+            <button v-if="holidayEditId" type="button" class="btn" :disabled="holidayBusy" style="height:34px" @click="cancelHolidayEdit">Cancel</button>
+          </form>
+          <p v-if="holidayError" class="error-text" role="alert" style="margin-top:6px">{{holidayError}}</p>
+          <div v-if="filteredHolidays.length" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;max-height:360px;overflow-y:auto;padding-right:2px">
+            <div v-for="h in filteredHolidays" :key="h.id" style="border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px;background:#ffffff;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+              <div style="min-width:0">
+                <strong>{{h.date}}</strong> <span style="color:#64748b">({{h.weekday}})</span><br>
+                <span style="color:#0f172a;display:block;margin-top:2px">{{h.name}}</span>
+              </div>
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                <button type="button" class="icon" title="Edit holiday" aria-label="Edit holiday" :disabled="holidayBusy" @click="editHoliday(h)"><Pencil :size="13"/></button>
+                <button type="button" class="icon" title="Delete holiday" aria-label="Delete holiday" :disabled="holidayBusy" @click="removeHoliday(h)"><Trash2 :size="13"/></button>
+              </div>
             </div>
           </div>
         </div>
-        <span class="badge" :class="s.data.bot_rules?.skip_cambodia_holidays!==false?'teal':'gray'"><i></i>{{s.data.bot_rules?.skip_cambodia_holidays!==false?'Auto-skip ON':'OFF'}}</span>
       </div>
     </section>
     <section class="panel padded settings-panel"><div class="panel-head"><div><h2>Controller alerts</h2><p>Send a controller-labeled copy when a missing alert is delivered to its SA group.</p></div><ShieldCheck class="quiet"/></div>

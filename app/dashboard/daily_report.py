@@ -125,7 +125,7 @@ def _empty_bucket(region: str, dealer: str | None = None) -> dict:
         "district": 0,
         "commune": 0,
         "outlets_visit": 0,
-        "avg_outlets_visit": 0.0,
+        "avg_outlets_visit": 0,
         "skus": {sku: 0 for sku in REPORT_DAILY_SKUS},
     }
     if dealer is not None:
@@ -304,7 +304,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         row["active"] = len(active_tids_region[reg])
         row["district"] = len(districts_region[reg])
         row["commune"] = len(communes_region[reg])
-        row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"], 1) if row["active"] > 0 else 0.0
+        row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"]) if row["active"] > 0 else 0
         regions_out.append(row)
         all_districts.update(districts_region[reg])
         all_communes.update(communes_region[reg])
@@ -322,7 +322,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
     regions_total["district"] = len(all_districts)
     regions_total["commune"] = len(all_communes)
     regions_total["avg_outlets_visit"] = (
-        round(regions_total["outlets_visit"] / regions_total["active"], 1) if regions_total["active"] > 0 else 0.0
+        round(regions_total["outlets_visit"] / regions_total["active"]) if regions_total["active"] > 0 else 0
     )
 
     # Finalize dealer rows & totals
@@ -334,7 +334,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
         row["active"] = len(active_tids_dealer[dkey])
         row["district"] = len(districts_dealer[dkey])
         row["commune"] = len(communes_dealer[dkey])
-        row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"], 1) if row["active"] > 0 else 0.0
+        row["avg_outlets_visit"] = round(row["outlets_visit"] / row["active"]) if row["active"] > 0 else 0
         dealers_out.append(row)
 
     dealers_total = _empty_bucket("Grand Total", "")
@@ -348,7 +348,7 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
     dealers_total["district"] = len(all_districts)
     dealers_total["commune"] = len(all_communes)
     dealers_total["avg_outlets_visit"] = (
-        round(dealers_total["outlets_visit"] / dealers_total["active"], 1) if dealers_total["active"] > 0 else 0.0
+        round(dealers_total["outlets_visit"] / dealers_total["active"]) if dealers_total["active"] > 0 else 0
     )
 
     return {
@@ -366,14 +366,13 @@ def daily_report_data(db, from_date: date | None = None, to_date: date | None = 
 
 
 def build_daily_report_workbook(data: dict) -> bytes:
-    """Export Report Daily to an Excel workbook matching report_SO_template with red data bars."""
+    """Export Report Daily to an Excel workbook with 2 sheets: By Region and By Dealer."""
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Daily Sales Report"
+    ws_region = wb.active
+    ws_region.title = "By Region"
+    ws_dealer = wb.create_sheet(title="By Dealer")
 
     skus = data["skus"]
-    total_cols = 12 + len(skus)  # A..L + 24 SKUs = 36 cols
-
     header_fill = PatternFill("solid", fgColor="14532D")
     sub_fill = PatternFill("solid", fgColor="E8F3EC")
     total_fill = PatternFill("solid", fgColor="F1F5F9")
@@ -386,41 +385,48 @@ def build_daily_report_workbook(data: dict) -> bytes:
 
     date_text = data["from_date"] if data["from_date"] == data["to_date"] else f"{data['from_date']} to {data['to_date']}"
 
-    def write_section(start_row: int, title: str, rows: list[dict], total_row: dict, include_dealer: bool) -> int:
-        ws.cell(start_row, 1, "Region: R1 to R8").font = dark_bold
-        ws.cell(start_row + 1, 1, f"Date: {date_text}").font = dark_bold
-        ws.cell(start_row + 2, 1, f"#Dealer: {data['dealer_count']}").font = dark_bold
-        ws.cell(start_row + 3, 1, title).font = title_font
+    def populate_sheet(ws, title: str, rows: list[dict], total_row: dict, include_dealer: bool) -> None:
+        lead_cols = 2 if include_dealer else 1
+        total_cols = lead_cols + 10 + len(skus)
+        c_team = lead_cols + 1
+        c_loc = c_team + 6
+        c_visits = c_loc + 2
+        c_avg = c_visits + 1
+        c_sku = c_avg + 1
 
-        h1 = start_row + 4
-        h2 = start_row + 5
-        h3 = start_row + 6
+        ws.cell(1, 1, "Region: R1 to R8").font = dark_bold
+        ws.cell(2, 1, f"Date: {date_text}").font = dark_bold
+        ws.cell(3, 1, f"#Dealer: {data['dealer_count']}").font = dark_bold
+        ws.cell(4, 1, title).font = title_font
+
+        h1, h2, h3 = 5, 6, 7
 
         ws.cell(h1, 1, "REGION")
         ws.merge_cells(start_row=h1, start_column=1, end_row=h3, end_column=1)
-        ws.cell(h1, 2, "DEALER" if include_dealer else "")
-        ws.merge_cells(start_row=h1, start_column=2, end_row=h3, end_column=2)
+        if include_dealer:
+            ws.cell(h1, 2, "DEALER")
+            ws.merge_cells(start_row=h1, start_column=2, end_row=h3, end_column=2)
 
-        ws.cell(h1, 3, "Sales Team")
-        ws.merge_cells(start_row=h1, start_column=3, end_row=h2, end_column=8)
+        ws.cell(h1, c_team, "Sales Team")
+        ws.merge_cells(start_row=h1, start_column=c_team, end_row=h2, end_column=c_team + 5)
 
-        ws.cell(h1, 9, "Location")
-        ws.merge_cells(start_row=h1, start_column=9, end_row=h1, end_column=10)
-        ws.cell(h2, 9, "Actual Visit Location")
-        ws.merge_cells(start_row=h2, start_column=9, end_row=h2, end_column=10)
+        ws.cell(h1, c_loc, "Location")
+        ws.merge_cells(start_row=h1, start_column=c_loc, end_row=h1, end_column=c_loc + 1)
+        ws.cell(h2, c_loc, "Actual Visit Location")
+        ws.merge_cells(start_row=h2, start_column=c_loc, end_row=h2, end_column=c_loc + 1)
 
-        ws.cell(h1, 11, "# Outlets Visit\nBased on Report")
-        ws.merge_cells(start_row=h1, start_column=11, end_row=h3, end_column=11)
-        ws.cell(h1, 12, "Average #\nof Outlets Visit")
-        ws.merge_cells(start_row=h1, start_column=12, end_row=h3, end_column=12)
+        ws.cell(h1, c_visits, "# Outlets Visit\nBased on Report")
+        ws.merge_cells(start_row=h1, start_column=c_visits, end_row=h3, end_column=c_visits)
+        ws.cell(h1, c_avg, "Average #\nof Outlets Visit")
+        ws.merge_cells(start_row=h1, start_column=c_avg, end_row=h3, end_column=c_avg)
 
-        ws.cell(h1, 13, "Execution Purchase outlet By SKU")
-        ws.merge_cells(start_row=h1, start_column=13, end_row=h2, end_column=total_cols)
+        ws.cell(h1, c_sku, "Execution Purchase outlet By SKU")
+        ws.merge_cells(start_row=h1, start_column=c_sku, end_row=h2, end_column=total_cols)
 
         sub_headers = ["SA", "SA WS", "Commando", "SA Leader", "AL", "Active", "District", "Commune"]
-        for offset, label in enumerate(sub_headers, start=3):
+        for offset, label in enumerate(sub_headers, start=c_team):
             ws.cell(h3, offset, label)
-        for offset, sku in enumerate(skus, start=13):
+        for offset, sku in enumerate(skus, start=c_sku):
             ws.cell(h3, offset, sku)
 
         for r_idx in (h1, h2, h3):
@@ -434,11 +440,11 @@ def build_daily_report_workbook(data: dict) -> bytes:
         data_start = h3 + 1
         cur = data_start
         for item in rows:
+            lead_vals = [item["region"], item.get("dealer", "")] if include_dealer else [item["region"]]
             vals = [
-                item["region"],
-                item.get("dealer", "") if include_dealer else "",
+                *lead_vals,
                 item["sa"], item["sa_ws"], item["commando"], item["sa_leader"], item["al"], item["active"],
-                item["district"], item["commune"], item["outlets_visit"], item["avg_outlets_visit"],
+                item["district"], item["commune"], item["outlets_visit"], int(round(item["avg_outlets_visit"])),
                 *[item["skus"].get(sku, 0) for sku in skus],
             ]
             for c_idx, val in enumerate(vals, start=1):
@@ -450,16 +456,16 @@ def build_daily_report_workbook(data: dict) -> bytes:
         data_end = cur - 1
         if data_end >= data_start:
             rule = DataBarRule(start_type="num", start_value=0, end_type="max", color="EF4444", showValue=True)
-            for c_idx in range(3, total_cols + 1):
+            for c_idx in range(c_team, total_cols + 1):
                 col_ltr = get_column_letter(c_idx)
                 ws.conditional_formatting.add(f"{col_ltr}{data_start}:{col_ltr}{data_end}", rule)
 
+        tot_lead = ["Grand Total", ""] if include_dealer else ["Grand Total"]
         tot_vals = [
-            "Grand Total",
-            "",
+            *tot_lead,
             total_row["sa"], total_row["sa_ws"], total_row["commando"], total_row["sa_leader"],
             total_row["al"], total_row["active"], total_row["district"], total_row["commune"],
-            total_row["outlets_visit"], total_row["avg_outlets_visit"],
+            total_row["outlets_visit"], int(round(total_row["avg_outlets_visit"])),
             *[total_row["skus"].get(sku, 0) for sku in skus],
         ]
         for c_idx, val in enumerate(tot_vals, start=1):
@@ -468,17 +474,18 @@ def build_daily_report_workbook(data: dict) -> bytes:
             cell.font = dark_bold
             cell.border = border
             cell.alignment = center
-        return cur + 2
 
-    next_row = write_section(1, "Daily Sales Report", data["regions"], data["regions_total"], include_dealer=False)
-    write_section(next_row, "Daily Sales Report by Dealer", data["dealers"], data["dealers_total"], include_dealer=True)
+        ws.column_dimensions["A"].width = 14
+        if include_dealer:
+            ws.column_dimensions["B"].width = 12
+        for c_idx in range(c_team, c_sku):
+            ws.column_dimensions[get_column_letter(c_idx)].width = 12
+        for c_idx in range(c_sku, total_cols + 1):
+            ws.column_dimensions[get_column_letter(c_idx)].width = 16
+        ws.freeze_panes = f"{get_column_letter(c_team)}{data_start}"
 
-    ws.column_dimensions["A"].width = 14
-    ws.column_dimensions["B"].width = 12
-    for c_idx in range(3, 13):
-        ws.column_dimensions[get_column_letter(c_idx)].width = 12
-    for c_idx in range(13, total_cols + 1):
-        ws.column_dimensions[get_column_letter(c_idx)].width = 16
+    populate_sheet(ws_region, "Daily Sales Report", data["regions"], data["regions_total"], include_dealer=False)
+    populate_sheet(ws_dealer, "Daily Sales Report by Dealer", data["dealers"], data["dealers_total"], include_dealer=True)
 
     buf = BytesIO()
     wb.save(buf)

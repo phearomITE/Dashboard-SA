@@ -60,8 +60,13 @@ def snapshot(db, online, preview):
     controllers.extend(dict(name=c.name, telegram_id=str(c.user_id), username=c.username, scope=c.group_code, regional=False)
                        for c in db.query(ControllerGroupAssignment).order_by(ControllerGroupAssignment.group_code))
     settings_obj = get_settings()
-    from app.services.khmer_holidays import cambodia_holiday_name, upcoming_cambodia_holidays
-    today_holiday = cambodia_holiday_name(now, extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES)
+    from app.services.khmer_holidays import db_holiday_name, list_holidays_from_db
+    holidays_list = list_holidays_from_db(
+        db,
+        default_years=(now.year, now.year + 1),
+        extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES,
+    )
+    today_holiday = db_holiday_name(db, now, extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES)
     return dict(now=now, master_date=None if preview else "2026-11-14", timezone=settings_obj.APP_TIMEZONE, online=online, preview=preview,
                 alerts_enabled=prefs is None or prefs.alerts_enabled,
                 bot_paused_until=bot_paused_until,
@@ -81,9 +86,7 @@ def snapshot(db, online, preview):
                         "7:30am-5:00pm",
                         "9:00am-8:00pm",
                     ],
-                    upcoming_holidays=upcoming_cambodia_holidays(
-                        now.date(), limit=8, extra_holidays_csv=settings_obj.EXTRA_HOLIDAY_DATES
-                    ),
+                    holidays=holidays_list,
                 ),
                 roster=roster, controllers=controllers,
                 groups=[dict(id=str(g.group_id), name=g.group_name or str(g.group_id), region=region_from_group(g.group_name),

@@ -94,6 +94,62 @@ def is_cambodia_holiday(target: date | datetime, *, extra_holidays_csv: str = ""
     return cambodia_holiday_name(target, extra_holidays_csv=extra_holidays_csv) is not None
 
 
+def holidays_for_year(year: int, *, extra_holidays_csv: str = "") -> list[tuple[date, str]]:
+    """Return all official Cambodia public holidays for a given calendar year, sorted by date."""
+    by_date: dict[date, str] = {}
+    for (month, day_num), name in FIXED_CAMBODIA_HOLIDAYS.items():
+        by_date[date(year, month, day_num)] = name
+    for d, name in LUNAR_CAMBODIA_HOLIDAYS.items():
+        if d.year == year:
+            by_date[d] = name
+    for d in _parse_extra_holidays(extra_holidays_csv):
+        if d.year == year:
+            by_date.setdefault(d, "Custom Public Holiday")
+    return sorted(by_date.items(), key=lambda pair: pair[0])
+
+
+def ensure_holidays_seeded(db, years: tuple[int, ...] = (2026, 2027), *, extra_holidays_csv: str = "") -> None:
+    """Seed official Cambodia public holidays into public_holidays once if the table is empty."""
+    from app.database.models import PublicHoliday
+    if db.query(PublicHoliday.id).first() is not None:
+        return
+    for year in years:
+        for hdate, hname in holidays_for_year(year, extra_holidays_csv=extra_holidays_csv):
+            db.add(PublicHoliday(holiday_date=hdate, name=hname))
+    db.commit()
+
+
+def list_holidays_from_db(db, default_years: tuple[int, ...] = (2026, 2027), *, extra_holidays_csv: str = "") -> list[dict]:
+    """Return all saved Cambodia public holidays ordered by date, seeding defaults if empty."""
+    from app.database.models import PublicHoliday
+    ensure_holidays_seeded(db, years=default_years, extra_holidays_csv=extra_holidays_csv)
+    rows = db.query(PublicHoliday).order_by(PublicHoliday.holiday_date.asc(), PublicHoliday.id.asc()).all()
+    return [
+        {
+            "id": row.id,
+            "date": row.holiday_date.isoformat(),
+            "year": row.holiday_date.year,
+            "weekday": row.holiday_date.strftime("%A"),
+            "name": row.name,
+        }
+        for row in rows
+    ]
+
+
+def db_holiday_name(db, target: date | datetime, *, extra_holidays_csv: str = "") -> str | None:
+    """Look up target date in editable public_holidays table (falling back to static list if empty)."""
+    from app.database.models import PublicHoliday
+    day = target.date() if isinstance(target, datetime) else target
+    try:
+        has_any = db.query(PublicHoliday.id).first() is not None
+        if has_any:
+            row = db.query(PublicHoliday).filter(PublicHoliday.holiday_date == day).first()
+            return row.name if row else None
+    except Exception:
+        pass
+    return cambodia_holiday_name(day, extra_holidays_csv=extra_holidays_csv)
+
+
 def upcoming_cambodia_holidays(
     from_day: date | datetime,
     limit: int = 8,
