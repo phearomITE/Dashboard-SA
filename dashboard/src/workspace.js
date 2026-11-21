@@ -2,7 +2,7 @@ import { inject, reactive } from 'vue'
 
 export const workspaceKey = Symbol('workspace')
 export const useWorkspace = () => inject(workspaceKey)
-export const positions = ['SA', 'Commando', 'SA Team Leader']
+export const positions = ['SA', 'SA Support WS', 'Commando', 'SA Team Leader']
 export const shifts = ['6:30am-4:30pm', '7:00am-5:00pm', '7:30am-5:00pm', '9:00am-8:00pm']
 export const eventNames = { reports: 'Sale report', pins: 'Location pin', alerts: 'Missing alert' }
 export const num = n => Number(n || 0).toLocaleString()

@@ -92,6 +92,8 @@ def _display_position(raw: str | None) -> str:
         return "SA Team Leader"
     if "commando" in key or "cammondo" in key:
         return "Commando"
+    if "support ws" in key or "sa ws" in key or key == "ws":
+        return "SA Support WS"
     return "SA"
 
 

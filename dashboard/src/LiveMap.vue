@@ -22,7 +22,27 @@ function formatDetailDate(stamp){
 }
 const member=computed(()=>s.data.roster.find(r=>r.telegram_id===selected.value&&r.region===employee.value?.last.region&&r.dealer===employee.value?.last.dealer))
 const dayUsers=computed(()=>new Set(records.value.map(p=>p.employee_id)).size)
-const routeKm=computed(()=>events.value.some(p=>p.leg_km==null)?'Incomplete':km(events.value.reduce((n,p)=>n+p.leg_km,0)))
+const roadRoutes=ref({}),roadLoading=ref(false)
+const roadCache=new Map()
+const inCambodiaCoord=p=>p&&Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))&&Number(p.lat)>=10.2&&Number(p.lat)<=14.8&&Number(p.lon)>=102.2&&Number(p.lon)<=107.8
+function roadLegKm(route,stop){
+  const rr=roadRoutes.value[scope(route)]
+  if(!rr||!rr.available)return null
+  const val=rr.legByEventId?.[stop.id]
+  return val!=null?Number(val):null
+}
+const routeKm=computed(()=>{
+  if(!selected.value||!routes.value.length)return '—'
+  if(roadLoading.value)return 'Calculating…'
+  let total=0,hasAny=false,incomplete=false
+  for(const r of routes.value){
+    const rr=roadRoutes.value[scope(r)]
+    if(!rr||!rr.available){incomplete=true;continue}
+    if(rr.total_km!=null){total+=Number(rr.total_km);hasAny=true}
+  }
+  if(!hasAny&&incomplete)return 'Unavailable'
+  return km(total)+(incomplete?' (partial)':'')
+})
 const filters=reactive({region:'',dealer:'',province:'',district:'',commune:''})
 const fields=[['region','Region'],['dealer','Dealer'],['province','Province'],['district','District'],['commune','Commune']]
 const scope=p=>JSON.stringify([p.region,p.dealer])
@@ -102,7 +122,66 @@ const hasFilters=computed(()=>search.value||Object.values(filters).some(Boolean)
 function clear(){for(const [k] of fields)filters[k]='';search.value='';selected.value='';focused.value=null}
 function selectEmployee(id){selected.value=id;focused.value=null}
 watch(employees,list=>{if(selected.value&&!list.some(e=>e.id===selected.value))selectEmployee('')})
-let serial=0,timer
+let serial=0,roadSerial=0,timer
+async function loadRoadRoutes(){
+  const run=++roadSerial
+  if(!selected.value||!routes.value.length){roadRoutes.value={};roadLoading.value=false;return}
+  const next={}
+  const pending=[]
+  for(const r of routes.value){
+    const key=scope(r)
+    const validStops=r.stops.filter(inCambodiaCoord)
+    const hasOrigin=inCambodiaCoord(r.origin)
+    const waypoints=[]
+    if(hasOrigin)waypoints.push([Number(r.origin.lat),Number(r.origin.lon)])
+    for(const st of validStops)waypoints.push([Number(st.lat),Number(st.lon)])
+    if(waypoints.length<2){
+      next[key]={available:true,coordinates:[],legs_km:[],total_km:0,legByEventId:{}}
+      continue
+    }
+    const sig=waypoints.map(([a,b])=>`${a.toFixed(5)},${b.toFixed(5)}`).join(';')
+    const cached=roadCache.get(sig)
+    if(cached){
+      const legByEventId={}
+      validStops.forEach((st,i)=>{
+        const legIdx=hasOrigin?i:i-1
+        legByEventId[st.id]=legIdx>=0&&legIdx<cached.legs_km.length?cached.legs_km[legIdx]:null
+      })
+      next[key]={...cached,legByEventId}
+    }else{
+      pending.push({key,sig,waypoints,validStops,hasOrigin})
+    }
+  }
+  roadRoutes.value=next
+  if(!pending.length){roadLoading.value=false;return}
+  roadLoading.value=true
+  try{
+    await Promise.all(pending.map(async item=>{
+      try{
+        const data=await request('live-map/road-route','POST',{points:item.waypoints})
+        if(run!==roadSerial)return
+        if(data&&data.available){
+          if(roadCache.size>256)roadCache.clear()
+          roadCache.set(item.sig,data)
+          const legByEventId={}
+          item.validStops.forEach((st,i)=>{
+            const legIdx=item.hasOrigin?i:i-1
+            legByEventId[st.id]=legIdx>=0&&legIdx<data.legs_km.length?data.legs_km[legIdx]:null
+          })
+          next[item.key]={...data,legByEventId}
+        }else{
+          next[item.key]={available:false,coordinates:[],legs_km:[],total_km:null,legByEventId:{}}
+        }
+      }catch{
+        if(run===roadSerial)next[item.key]={available:false,coordinates:[],legs_km:[],total_km:null,legByEventId:{}}
+      }
+    }))
+    if(run===roadSerial)roadRoutes.value={...next}
+  }finally{
+    if(run===roadSerial)roadLoading.value=false
+  }
+}
+watch([selected,routes],loadRoadRoutes,{immediate:true})
 async function load(reset=false){
   const run=++serial,f=fromDate.value,t=toDate.value
   if(reset){records.value=[];reportRecords.value=[];missRecords.value=[];firstLoad.value=true;clear()}
@@ -120,8 +199,8 @@ async function load(reset=false){
 }
 watch([fromDate,toDate],()=>{if(fromDate.value&&toDate.value&&fromDate.value>toDate.value)fromDate.value=toDate.value;load(true)})
 function poll(){if(!document.hidden&&toDate.value===today.value&&!loading.value&&!uploading.value)load()}
-onMounted(()=>{load();timer=setInterval(poll,30000);document.addEventListener('visibilitychange',poll)})
-onUnmounted(()=>{serial++;clearInterval(timer);document.removeEventListener('visibilitychange',poll)})
+onMounted(()=>{load();timer=setInterval(poll,10000);document.addEventListener('visibilitychange',poll)})
+onUnmounted(()=>{serial++;roadSerial++;clearInterval(timer);document.removeEventListener('visibilitychange',poll)})
 function openImport(){file.value=null;uploadError.value='';dialog.value.querySelector('input').value='';dialog.value.showModal()}
 async function upload(){
   const f=file.value
@@ -170,7 +249,7 @@ function template(){
         <div class="map-panel-head"><div class="map-heading"><MapPin :size="19"/><h2>Check-in map</h2></div>
           <div class="map-head-actions"><span v-if="fromDate===today&&toDate===today" class="map-live"><i/>{{s.preview?'Sample day':'Live · 10s'}}</span>
             <span v-else class="map-historical">Historical</span><button class="icon" aria-label="Refresh check-ins" :disabled="loading" @click="load()"><RefreshCw :size="15" :class="{spin:loading}"/></button></div></div>
-        <CheckinMap :events="events" :origins="origins" :selected="selected" :focused="focused" :fit-key="fitKey" @select="selectEmployee" @focus="focused=$event"/>
+        <CheckinMap :events="events" :origins="origins" :road-routes="roadRoutes" :selected="selected" :focused="focused" :fit-key="fitKey" @select="selectEmployee" @focus="focused=$event"/>
         <div class="map-footer"><span><i class="legend-stop"/>Outlet check-in</span><span><i class="legend-dealer"/>Dealer origin</span><span class="map-timezone">{{s.data.timezone}}</span></div>
       </div>
       <div class="route-panel">
@@ -178,16 +257,16 @@ function template(){
           <p v-if="employee.last.reported_employee_id">Reported employee ID {{employee.last.reported_employee_id}}</p><p>Telegram ID {{selected}} · {{member?.position||'Position unavailable'}}</p></div>
           <div class="route-scroll"><div class="route-summary"><strong>Employee route · {{events.length}} Check In</strong>
             <p>{{dayUsers}} employees in range · {{new Set(events.filter(p=>p.district).map(p=>p.province+'|'+p.district)).size}} districts · {{new Set(events.filter(p=>p.commune).map(p=>[p.province,p.district,p.commune].join('|'))).size}} communes</p>
-            <p>Route distance · {{routeKm}}</p><p>First {{clock(events[0].at)}} · Latest {{clock(events.at(-1).at)}}</p><p>Status · Checked in</p>
+            <p>Road distance · {{routeKm}}</p><p>First {{clock(events[0].at)}} · Latest {{clock(events.at(-1).at)}}</p><p>Status · Checked in</p>
             <strong>Written reasons</strong><p v-for="reason in reasons[selected]||[]" :key="reason">{{reason}}</p><p v-if="!reasons[selected]?.length">No written explanation linked for this date.</p></div>
             <div v-for="r in routes" :key="scope(r)" class="employee-route">
             <div class="route-item origin"><span class="route-number"><Building2 :size="15"/></span><div><strong>Dealer · {{r.dealer||'Unassigned'}}</strong><small>{{r.region||'Region unknown'}} · {{r.origin?'Route origin':'Coordinates missing'}}</small>
               <button v-if="!r.origin" class="map-back" @click="openImport">Upload location <ArrowRight :size="12"/></button></div></div>
             <button v-for="p in r.stops" :key="p.id" class="route-item stop" :class="{active:focused===p.id}" @click="focused=p.id">
               <span class="route-number">{{p.outlet}}</span><span><strong>{{p.outlet===1?'Dealer '+(r.dealer||''):'Outlet '+(p.outlet-1)}} → Outlet {{p.outlet}}</strong><small>{{clock(p.at)}} · {{[p.commune,p.district,p.province].filter(Boolean).join(', ')||'Outside mapped areas'}}</small>
-              <strong v-if="p.outlet_name">{{p.outlet_name}}</strong><small>{{km(p.leg_km)}} from {{p.outlet===1?'dealer':'previous stop'}}</small>
+              <strong v-if="p.outlet_name">{{p.outlet_name}}</strong><small>{{roadLoading&&roadLegKm(r,p)==null?'Calculating road distance…':km(roadLegKm(r,p))+' road distance from '+(p.outlet===1?'dealer':'previous stop')}}</small>
               <small v-if="focused===p.id">{{p.lat.toFixed(5)}}, {{p.lon.toFixed(5)}} · {{p.group}}</small><small>Show on map ↗</small></span></button>
-          </div></div><div class="route-foot"><Route :size="15"/>Straight-line distances between pins</div>
+          </div></div><div class="route-foot"><Route :size="15"/>Road distances between pins</div>
         </template>
         <template v-else><div class="route-head"><div class="map-heading"><Users :size="18"/><h2>Employees</h2><span class="count-pill">{{employees.length}}</span></div>
           <p>{{filtered.length}} check-ins · latest activity first</p></div>

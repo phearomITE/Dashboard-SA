@@ -1,7 +1,7 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { Activity, ArrowDownToLine, CalendarDays, ChevronDown, ChevronRight,
-  Layers3, LayoutDashboard, ListChecks, LogOut, MapPinned, Menu, PanelLeft, Radio,
+  FileSpreadsheet, Layers3, LayoutDashboard, ListChecks, LogOut, MapPinned, Menu, PanelLeft, Radio,
   RefreshCw, ShieldCheck, SlidersHorizontal, Users, X } from 'lucide-vue-next'
 import { dateLabel, useWorkspace } from './workspace'
 import Overview from './Overview.vue'
@@ -11,15 +11,17 @@ import MissingReport from './MissingReport.vue'
 import Dialogs from './Dialogs.vue'
 import brandLogo from './assets/chip-mong-foodbev.png'
 const LiveMap = defineAsyncComponent(() => import('./LiveMap.vue'))
+const ReportDaily = defineAsyncComponent(() => import('./ReportDaily.vue'))
 
 const { s, start, refresh, signIn, signOut, download, notify } = useWorkspace()
 const nav = [
-  ['Workspace', [['overview','Overview',LayoutDashboard],['live-map','Live Map',MapPinned],['missing-report','Miss Report',ListChecks],['roster','SA roster',Users],['annual-leave','Annual Leave',CalendarDays]]],
+  ['Workspace', [['overview','Overview',LayoutDashboard],['live-map','Live Map',MapPinned],['missing-report','Miss Report',ListChecks],['report-daily','Report Daily',FileSpreadsheet],['roster','SA roster',Users],['annual-leave','Annual Leave',CalendarDays]]],
   ['Management', [['controllers','Controllers',ShieldCheck],['settings','Settings',SlidersHorizontal]]],
 ]
 const names = Object.fromEntries(nav.flatMap(([,items]) => items.map(([k,n]) => [k,n])))
 const descriptions = {overview:'A live view of your field team and reporting activity.',activity:'Review reports, location pins, and missing alerts across your groups.',
-  'live-map':'Follow field check-ins and trace each employee’s route from dealer to outlet.',
+  'live-map':'Follow field check-ins and trace each employee’s road route from dealer to outlet.',
+  'report-daily':'Live 10-second daily sales report by Region (R1–R8), Dealer, and SKU execution.',
   roster:'Manage field members, working shifts, and alert eligibility.',groups:'Manage the Telegram groups connected to your bot.',
   'annual-leave':'Schedule full-day, morning, afternoon, or date-range leave for SA members.',
   'missing-report':'Review SA visits, missing reports, and written reasons.',
@@ -109,6 +111,7 @@ async function applyDateRange() {
         <Overview v-if="page==='overview'||page==='activity'" :activity-only="page==='activity'" @navigate="go"/>
         <LiveMap v-else-if="page==='live-map'"/>
         <MissingReport v-else-if="page==='missing-report'"/>
+        <ReportDaily v-else-if="page==='report-daily'"/>
         <AnnualLeave v-else-if="page==='annual-leave'" :group-id="alGroup"/>
         <Management v-else :page="page"/>
       </div>

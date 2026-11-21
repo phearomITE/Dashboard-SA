@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +17,7 @@ from telegram.error import TelegramError
 from app.data.controllers import CONTROLLERS_BY_REGION, GLOBAL_MANAGEMENT_USER_IDS, normalize_group_code, region_from_group
 from app.data.sa_members import normalize_group
 from app.database.models import ControllerGroupAssignment, MissingSalePhotoAlert, MonitoringPreferences, PinHistory, Product, RegionalController, SAAlertExclusion, SAList, SAUser, TelegramGroup
+from app.dashboard.daily_report import build_daily_report_workbook, daily_report_data
 from app.dashboard.queries import activity, analytics, missing_report, snapshot
 from app.dashboard.dealer_import import import_dealers
 from app.dashboard.roster_import import import_master_sa
@@ -29,11 +31,15 @@ from app.core.telemetry import instrument_dashboard
 
 DIST = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
 Shift = Literal["6:30am-4:30pm", "7:00am-5:00pm", "7:30am-5:00pm", "9:00am-8:00pm"]
-Position = Literal["SA", "Commando", "SA Team Leader"]
+Position = Literal["SA", "SA Support WS", "Commando", "SA Team Leader"]
 
 
 class Input(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class RoadRouteInput(Input):
+    points: list[tuple[float, float]] = Field(min_length=2, max_length=120)
 
 
 class Login(Input):
@@ -344,7 +350,88 @@ def create_api(access, sessions, bot=None, *, preview=False, auth_required=True,
             if len(content) + len(chunk) > 4_000_000:
                 raise HTTPException(413, "Choose a file smaller than 4 MB.")
             content.extend(chunk)
-        return await run_in_threadpool(import_dealers, db, bytes(content), format)
+        result = await run_in_threadpool(import_dealers, db, bytes(content), format)
+        api_cache.clear()
+        return result
+
+    road_route_cache: dict[tuple, dict] = {}
+
+    @app.post("/api/live-map/road-route")
+    async def live_map_road_route(body: RoadRouteInput):
+        pts = [(round(float(lat), 5), round(float(lon), 5)) for lat, lon in body.points]
+        for lat, lon in pts:
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise HTTPException(422, "Invalid coordinates.")
+        cache_key = tuple(pts)
+        cached = road_route_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        all_coords: list[list[float]] = []
+        all_legs_km: list[float] = []
+        chunk_size = 25
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                idx = 0
+                while idx < len(pts) - 1:
+                    chunk = pts[idx: idx + chunk_size]
+                    coord_str = ";".join(f"{lon},{lat}" for lat, lon in chunk)
+                    url = f"https://router.project-osrm.org/route/v1/driving/{coord_str}"
+                    resp = await client.get(url, params={"overview": "full", "geometries": "geojson", "steps": "false"})
+                    if resp.status_code != 200:
+                        return {"available": False, "legs_km": [], "total_km": None, "coordinates": []}
+                    payload = resp.json()
+                    routes_list = payload.get("routes") or []
+                    if payload.get("code") != "Ok" or not routes_list:
+                        return {"available": False, "legs_km": [], "total_km": None, "coordinates": []}
+                    route_obj = routes_list[0]
+                    geom = (route_obj.get("geometry") or {}).get("coordinates") or []
+                    seg_coords = [[float(c[1]), float(c[0])] for c in geom]
+                    if all_coords and seg_coords:
+                        all_coords.extend(seg_coords[1:])
+                    else:
+                        all_coords.extend(seg_coords)
+                    for leg in route_obj.get("legs") or []:
+                        all_legs_km.append(round(float(leg.get("distance", 0.0)) / 1000.0, 2))
+                    idx += chunk_size - 1
+        except Exception:
+            return {"available": False, "legs_km": [], "total_km": None, "coordinates": []}
+
+        result = {
+            "available": True,
+            "legs_km": all_legs_km,
+            "total_km": round(sum(all_legs_km), 2),
+            "coordinates": all_coords,
+        }
+        if len(road_route_cache) >= 512:
+            road_route_cache.clear()
+        road_route_cache[cache_key] = result
+        return result
+
+    @app.get("/api/report-daily")
+    def report_daily(from_date: date | None = None, to_date: date | None = None):
+        today = local_now().date()
+        f = from_date or to_date or today
+        t = to_date or from_date or today
+        if t < f or (t - f).days > 366:
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        return cached_endpoint(("report-daily", str(f), str(t)), 10, lambda db: daily_report_data(db, f, t))
+
+    @app.get("/api/report-daily/export")
+    def report_daily_export(from_date: date | None = None, to_date: date | None = None):
+        today = local_now().date()
+        f = from_date or to_date or today
+        t = to_date or from_date or today
+        if t < f or (t - f).days > 366:
+            raise HTTPException(422, "Choose a valid date range of up to 367 days.")
+        data = cached_endpoint(("report-daily", str(f), str(t)), 10, lambda db: daily_report_data(db, f, t))
+        content = build_daily_report_workbook(data)
+        filename = f"daily-sales-report-{f.isoformat()}-to-{t.isoformat()}.xlsx"
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.get("/api/analytics")
     def metrics(days: int = Query(7, ge=1, le=366), from_date: date | None = None, to_date: date | None = None):

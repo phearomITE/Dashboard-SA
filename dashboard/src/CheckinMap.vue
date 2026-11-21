@@ -6,7 +6,7 @@ import {Crosshair,Layers3,Minus,Plus} from 'lucide-vue-next'
 import {useWorkspace} from './workspace'
 import brandLogo from './assets/chip-mong-foodbev.png'
 
-const props=defineProps({events:{type:Array,required:true},origins:{type:Array,required:true},selected:String,fitKey:String,focused:Number})
+const props=defineProps({events:{type:Array,required:true},origins:{type:Array,required:true},roadRoutes:{type:Object,default:()=>({})},selected:String,fitKey:String,focused:Number})
 const emit=defineEmits(['select','focus'])
 const {request}=useWorkspace()
 const element=ref(null),mapType=ref('street'),areaError=ref(false),tileError=ref(false),showDealers=ref(true)
@@ -33,27 +33,28 @@ function dealerIcon(){
 function repaint(){
   if(!map)return
   points.clearLayers();dealersLayer.clearLayers()
-  const legs=new Map()
   for(const origin of props.origins){
     if(!inCambodia(origin))continue
     const coord=[origin.lat,origin.lon]
     if(showDealers.value)L.marker(coord,{icon:dealerIcon(),title:'Dealer '+origin.dealer})
       .bindTooltip(plainLabel('Dealer · '+origin.region+' / '+origin.dealer)).addTo(dealersLayer)
-    legs.set(JSON.stringify([origin.region,origin.dealer]),{seq:0,coord})
+  }
+  if(props.selected && props.roadRoutes){
+    for(const rr of Object.values(props.roadRoutes)){
+      if(rr&&rr.available&&Array.isArray(rr.coordinates)&&rr.coordinates.length>=2){
+        L.polyline(rr.coordinates,{color:'#17715a',weight:3.5,opacity:.92,interactive:false}).addTo(points)
+      }
+    }
   }
   for(const p of props.events){
     if(!inCambodia(p))continue
     const coord=[p.lat,p.lon]
     const key=JSON.stringify([p.region,p.dealer])
-    const from=legs.get(key)
-    if(props.selected && from && from.seq===p.outlet-1){
-      L.polyline([from.coord,coord],{color:'#17715a',weight:3,opacity:.88,dashArray:from.seq===0?'6 6':null,interactive:false}).addTo(points)
-    }
-    const legKm=p.leg_km!=null?Number(p.leg_km):(from&&from.seq===p.outlet-1&&map?map.distance(from.coord,coord)/1000:null)
-    const distText=formatDistanceKm(legKm)
-    const distLabel=distText?' · Distance: '+distText:''
+    const rr=props.roadRoutes?.[key]
+    const roadKm=rr&&rr.available&&rr.legByEventId?.[p.id]!=null?Number(rr.legByEventId[p.id]):null
+    const distText=formatDistanceKm(roadKm)
+    const distLabel=distText?' · Road Distance: '+distText:''
     const tooltipLabel=p.name+' · Outlet '+p.outlet+' · '+p.at.slice(11,16)+distLabel
-    legs.set(key,{seq:p.outlet,coord})
     const marker=props.selected
       ? L.marker(coord,{icon:pinIcon(p.outlet,false,props.focused===p.id),title:tooltipLabel,zIndexOffset:props.focused===p.id?1000:0})
       : L.circleMarker(coord,{radius:6,color:'#fff',weight:2,fillColor:'#167758',fillOpacity:.94})
@@ -111,7 +112,7 @@ onMounted(()=>{
   road.addTo(map);fit();map.on('moveend',areas);repaint()
   observer=new ResizeObserver(()=>{map?.invalidateSize();if(map&&!props.selected)fit()});observer.observe(element.value)
 })
-watch(()=>[props.events,props.origins,props.selected,props.focused],repaint)
+watch(()=>[props.events,props.origins,props.roadRoutes,props.selected,props.focused],repaint)
 watch(showDealers,repaint)
 watch(()=>props.fitKey,fit,{flush:'post'})
 watch(()=>props.focused,id=>{const p=props.events.find(r=>r.id===id);if(p && map)map.setView([p.lat,p.lon],Math.max(map.getZoom(),14),{animate:false})})
