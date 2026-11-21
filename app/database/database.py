@@ -1,6 +1,8 @@
 
 
-from sqlalchemy import create_engine, text
+import time
+
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.core.config import get_settings
 
@@ -19,13 +21,33 @@ _connect_args = (
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_size=max(1, settings.DB_POOL_SIZE),
+    max_overflow=max(0, settings.DB_MAX_OVERFLOW),
     pool_recycle=settings.DB_POOL_RECYCLE,
     pool_timeout=settings.DB_POOL_TIMEOUT,
     connect_args=_connect_args,
     echo=False,
 )
+
+
+def _is_connection_slot_error(exc: Exception) -> bool:
+    """Return True when PostgreSQL rejects a connection due to full slots."""
+    msg = str(exc).lower()
+    return "remaining connection slots" in msg or "too many clients" in msg
+
+
+if settings.database_url.startswith("postgresql"):
+    @event.listens_for(engine, "do_connect")
+    def _connect_with_slot_retry(dialect, conn_rec, cargs, cparams):
+        """Briefly retry PostgreSQL connections when all non-superuser slots are busy."""
+        delays = (0.5, 1.0, 2.0, 3.0)
+        for attempt in range(len(delays) + 1):
+            try:
+                return dialect.connect(*cargs, **cparams)
+            except Exception as exc:
+                if not _is_connection_slot_error(exc) or attempt >= len(delays):
+                    raise
+                time.sleep(delays[attempt])
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 # Keep the PostgreSQL session open for the lifetime of the bot.  A session-level

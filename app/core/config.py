@@ -11,11 +11,11 @@ class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
     DB_SSLMODE: str = ""
-    DB_POOL_SIZE: int = 3
-    DB_MAX_OVERFLOW: int = 2
+    DB_POOL_SIZE: int = 1
+    DB_MAX_OVERFLOW: int = 1
     DB_POOL_TIMEOUT: int = 30
-    DB_POOL_RECYCLE: int = 120
-    BOT_CONCURRENT_UPDATES: int = 8
+    DB_POOL_RECYCLE: int = 60
+    BOT_CONCURRENT_UPDATES: int = 4
 
     TELEGRAM_BOT_TOKEN: str
     DASHBOARD_ENABLED: bool = True
