@@ -64,13 +64,33 @@ REPORT_DAILY_SKUS: tuple[str, ...] = (
 
 
 def _norm_label(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9.()]+", " ", (text or "").lower()).split())
+    cleaned = (text or "").replace("\xa0", " ").strip().lstrip(".-•*•· ")
+    cleaned = re.sub(r"[^a-z0-9.()]+", " ", cleaned.lower())
+    cleaned = re.sub(r"\b(\d+(?:\.\d+)?)\s*(ml|l)\b", r"\1\2", cleaned)
+    cleaned = re.sub(r"\b(can|pet|water|sport|exprez|ize|wurkz|dazz|cbc|cb|cbl|cbb)(\d)", r"\1 \2", cleaned)
+    return " ".join(cleaned.split())
 
 
 _SKU_ALIAS_MAP: dict[str, str] = {_norm_label(sku): sku for sku in REPORT_DAILY_SKUS}
 _SKU_ALIAS_MAP.update({
     _norm_label("C COLA CAN 330ML ZERO SUGAR"): "C COLA CAN 330ML (Zero Sugar)",
     _norm_label("C COLA ZERO CAN 330ML"): "C COLA CAN 330ML (Zero Sugar)",
+    _norm_label("C ENRGY DRINK CAN 250ML"): "C ENERGY DRINK CAN 250ML",
+    _norm_label("C ENERGY DRINK CAN1 250ML"): "C ENERGY DRINK CAN 250ML",
+    _norm_label("CENERGY DRINK CAN 250ML"): "C ENERGY DRINK CAN 250ML",
+    _norm_label("SPORT 500ML"): "C SPORT DRINK PET 500ML",
+    _norm_label("C SPORT 500ML"): "C SPORT DRINK PET 500ML",
+    _norm_label("C SPORT DRINK 500ML"): "C SPORT DRINK PET 500ML",
+    _norm_label("SPORT DRINK PET 500ML"): "C SPORT DRINK PET 500ML",
+    _norm_label("SPORT DRINK 500ML"): "C SPORT DRINK PET 500ML",
+    _norm_label("WATERP ET 1.5L"): "WATER PET 1.5L",
+    _norm_label("WATERPET 1.5L"): "WATER PET 1.5L",
+    _norm_label("WATE PET 1.5L"): "WATER PET 1.5L",
+    _norm_label("WATER 1.5L"): "WATER PET 1.5L",
+    _norm_label("WATER 500ML"): "WATER PET 500ML",
+    _norm_label("WATER 350ML"): "WATER PET 350ML",
+    _norm_label("WURKZ CAN 250M"): "WURKZ CAN 250ML",
+    _norm_label("CBC CAN"): "CB CAN 330ML",
     _norm_label("CBC CAN 330ML"): "CB CAN 330ML",
     _norm_label("CBC CAN 4.4 (330ml)"): "CB CAN 4.4",
     _norm_label("CBC CAN 4.4"): "CB CAN 4.4",
